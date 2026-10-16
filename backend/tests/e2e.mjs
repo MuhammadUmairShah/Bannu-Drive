@@ -1,0 +1,975 @@
+// Integration test: boots the REAL server against a REAL MongoDB-compatible database,
+// a fake Cloudinary HTTP server, and real Socket.IO clients.
+//   MONGO_TEST_URI=mongodb://127.0.0.1:27017/safarx_test node tests/e2e.mjs
+// WARNING: drops the database named in MONGO_TEST_URI.
+import { spawn, spawnSync } from "child_process";
+import https from "https";
+import fs from "fs";
+import mongoose from "mongoose";
+import { io as ioClient } from "socket.io-client";
+
+const MONGO = process.env.MONGO_TEST_URI || "mongodb://127.0.0.1:27017/safarx_test";
+const PORT = 5055;
+const BASE = `http://127.0.0.1:${PORT}`;
+const ORIGIN = "http://localhost:5173";
+const env = {
+  ...process.env, PORT: String(PORT), MONGO_URI: MONGO, NODE_ENV: "development",
+  JWT_SECRET: "test_secret_test_secret_test_secret_1234", Frontend_URL: ORIGIN,
+  AUTH_RATE_LIMIT: "100000", LOGIN_RATE_LIMIT: "100000", REGISTER_RATE_LIMIT: "100000", GOOGLE_RATE_LIMIT: "100000", REFRESH_RATE_LIMIT: "100000", PASSWORD_RATE_LIMIT: "100000", BOOKING_RATE_LIMIT: "100000", REQUEST_RATE_LIMIT: "100000", PAYMENT_RATE_LIMIT: "100000", UPLOAD_RATE_LIMIT: "100000", ADMIN_RATE_LIMIT: "100000", DISABLE_DNS_OVERRIDE: "true", NODE_OPTIONS: "--import ./tests/helpers/atomic-shim.mjs", CLOUDINARY_CLOUD_NAME: "demo", CLOUDINARY_API_KEY: "key", CLOUDINARY_API_SECRET: "secret",
+  CLOUDINARY_UPLOAD_PREFIX: "https://127.0.0.1:9999", NODE_TLS_REJECT_UNAUTHORIZED: "0",
+  ADMIN_NAME: "Test Admin", ADMIN_EMAIL: "admin@test.pk", ADMIN_PHONE: "03001112222", ADMIN_PASSWORD: "AdminPass123"
+};
+
+let pass = 0, fail = 0;
+const failures = [];
+function check(name, cond, extra = "") {
+  if (cond) { pass++; console.log(`  PASS  ${name}`); }
+  else { fail++; failures.push(name); console.log(`  FAIL  ${name} ${extra}`); }
+}
+const section = (t) => console.log(`\n== ${t}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------- fake Cloudinary ----------
+const cloud = { uploads: [], destroys: [] };
+let counter = 0;
+if (!fs.existsSync("/tmp/fk.pem")) {
+  spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "/tmp/fk.pem", "-out", "/tmp/fc.pem", "-days", "2", "-subj", "/CN=127.0.0.1"]);
+}
+const fake = https.createServer({ key: fs.readFileSync("/tmp/fk.pem"), cert: fs.readFileSync("/tmp/fc.pem") }, (req, res) => {
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    const body = Buffer.concat(chunks).toString("latin1");
+    res.setHeader("content-type", "application/json");
+    if (req.url.endsWith("/image/upload")) {
+      const id = `safarx-bannu/profiles/fake_${++counter}`;
+      cloud.uploads.push({ id, bytes: body.length, hasPng: body.includes("PNG") });
+      res.end(JSON.stringify({ public_id: id, secure_url: `https://res.cloudinary.com/demo/image/upload/${id}.png`, version: 1 }));
+    } else if (req.url.endsWith("/image/destroy")) {
+      const m = body.match(/name="public_id"\r\n\r\n([^\r]+)/) || body.match(/public_id=([^&]+)/);
+      cloud.destroys.push(m ? decodeURIComponent(m[1]) : body.slice(0, 200));
+      res.end(JSON.stringify({ result: "ok" }));
+    } else { res.statusCode = 404; res.end("{}"); }
+  });
+});
+await new Promise((r) => fake.listen(9999, r));
+
+// ---------- DB + admin + server ----------
+await mongoose.connect(MONGO);
+await mongoose.connection.dropDatabase();
+await mongoose.disconnect();
+
+const seed = spawnSync("node", ["scripts/create-admin.js"], { env, encoding: "utf8" });
+console.log(seed.stdout.trim() || seed.stderr.trim());
+
+let serverLog = "";
+const server = spawn("node", ["server.js"], { env });
+server.stdout.on("data", (d) => (serverLog += d));
+server.stderr.on("data", (d) => (serverLog += d));
+for (let i = 0; i < 60 && !serverLog.includes("Backend running"); i++) await sleep(250);
+if (!serverLog.includes("Backend running")) { console.log(serverLog); process.exit(1); }
+
+// ---------- http client with cookie jar ----------
+class Client {
+  constructor(name) { this.name = name; this.cookie = ""; }
+  async req(method, path, body, { form } = {}) {
+    const headers = { origin: ORIGIN };
+    if (this.cookie) headers.cookie = this.cookie;
+    let payload;
+    if (form) payload = form;
+    else if (body !== undefined) { headers["content-type"] = "application/json"; payload = JSON.stringify(body); }
+    const r = await fetch(BASE + path, { method, headers, body: payload });
+    const set = r.headers.get("set-cookie");
+    if (set) { const c = set.split(";")[0]; this.cookie = c.endsWith("=") ? "" : c; }
+    let data = {}; try { data = await r.json(); } catch {}
+    return { status: r.status, data };
+  }
+  get = (p) => this.req("GET", p);
+  post = (p, b, o) => this.req("POST", p, b, o);
+  patch = (p, b) => this.req("PATCH", p, b);
+  del = (p) => this.req("DELETE", p);
+  socket() {
+    const s = ioClient(BASE, { extraHeaders: { cookie: this.cookie, origin: ORIGIN }, transports: ["websocket"], reconnection: false });
+    s.events = [];
+    for (const ev of ["notification:new", "driver:location", "ride:updated", "delivery:updated", "request:unavailable", "ride:offers", "coach:seats"]) s.on(ev, (p) => s.events.push({ ev, p }));
+    return s;
+  }
+}
+const png = () => { const f = new FormData(); f.append("image", new Blob([Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), Buffer.alloc(200, 7)])], { type: "image/png" }), "p.png"); return f; };
+const P = { latitude: 32.9889, longitude: 70.6056 }, D = { latitude: 32.9650, longitude: 70.6300 };
+const rideBody = (fare = 200) => ({ pickupLocation: "Bannu Cantt", destination: "Domel", vehicleType: "rickshaw", offeredFare: fare, pickupCoords: P, destinationCoords: D, distanceKm: 4.5, durationMin: 12 });
+const delBody = (fare = 300) => ({ pickupLocation: "Bannu Bazaar", destination: "Mithakhel", offeredFare: fare, pickupCoords: P, destinationCoords: D, distanceKm: 4.5, durationMin: 12, receiverName: "Ali", receiverPhone: "03211234567", packageDescription: "Books", parcelType: "document", parcelSize: "small" });
+const events = (s, ev) => s.events.filter((e) => e.ev === ev);
+
+try {
+  let sOpA, sDemo;
+  const cust = new Client("cust"), cust2 = new Client("cust2"), d1 = new Client("d1"), d2 = new Client("d2"), admin = new Client("admin"), anon = new Client("anon");
+
+  section("AUTH");
+  let r = await cust.post("/user/registration", { name: "Umair Customer", email: "Cust@Test.pk", password: "Password123", phone: "03001234567", role: "customer" });
+  check("customer registers (201) and gets cookie", r.status === 201 && cust.cookie.includes("safarx-bannu="), JSON.stringify(r.data));
+  check("response has no password", !JSON.stringify(r.data).includes("password"));
+  r = await anon.post("/user/registration", { name: "X", email: "evil@test.pk", password: "Password123", phone: "03009998888", role: "admin" });
+  check("registering as admin is blocked (403)", r.status === 403);
+  r = await anon.post("/user/registration", { name: "X", email: "cust@test.pk", password: "Password123", phone: "03005556666", role: "customer" });
+  check("duplicate email (case-insensitive) -> 409", r.status === 409);
+  r = await anon.post("/user/registration", { name: "X", email: "weak@test.pk", password: "123", phone: "03005557777", role: "customer" });
+  check("weak password -> 400", r.status === 400);
+  r = await anon.post("/user/login", { email: { $ne: null }, password: "x", role: "customer" });
+  check("NoSQL injection on login -> 400", r.status === 400);
+  r = await anon.post("/user/login", { email: "cust@test.pk", password: "wrong", role: "customer" });
+  check("wrong password -> 401", r.status === 401);
+  r = await anon.post("/user/login", { email: "cust@test.pk", password: "Password123", role: "driver" });
+  check("right password but wrong role -> 401", r.status === 401);
+  await cust2.post("/user/registration", { name: "Other Customer", email: "cust2@test.pk", password: "Password123", phone: "03007654321", role: "customer" });
+  for (const [c, n, e, ph] of [[d1, "Driver One", "d1@test.pk", "03101111111"], [d2, "Driver Two", "d2@test.pk", "03102222222"]]) {
+    r = await c.post("/user/registration", { name: n, email: e, password: "Password123", phone: ph, role: "driver", vehicleType: "rickshaw", vehicleModel: "Qingqi", vehicleNumber: "BNU-" + ph.slice(-3), licenseNumber: "LIC" + ph.slice(-3) });
+    check(`${n} registers`, r.status === 201, JSON.stringify(r.data));
+  }
+  r = await d1.post("/user/registration", { name: "Bad", email: "bad@test.pk", password: "Password123", phone: "03103333333", role: "driver" });
+  check("driver without vehicle info -> 400", r.status === 400);
+  r = await cust.get("/user/profile");
+  check("profile returns own data", r.status === 200 && r.data.user.email === "cust@test.pk");
+  r = await anon.get("/user/profile");
+  check("profile without cookie -> 401", r.status === 401);
+  r = await cust.patch("/user/profile", { name: "Umair Updated", phone: "03001234568" });
+  check("update profile", r.status === 200 && r.data.user.name === "Umair Updated", JSON.stringify(r.data));
+  r = await cust.patch("/user/profile", { phone: "03007654321" });
+  check("phone owned by someone else -> 409", r.status === 409);
+  r = await cust.patch("/user/profile", { role: "admin", isVerified: true });
+  r = await cust.get("/user/profile");
+  check("mass-assignment of role ignored", r.data.user.role === "customer");
+
+  section("PASSWORD CHANGE / FORGOT / RESET");
+  r = await cust.patch("/user/password", { currentPassword: "nope", newPassword: "NewPassword1" });
+  check("change password: wrong current -> 401", r.status === 401);
+  r = await cust.patch("/user/password", { currentPassword: "Password123", newPassword: "NewPassword1" });
+  check("change password ok", r.status === 200);
+  const tmp = new Client("tmp");
+  r = await tmp.post("/user/login", { email: "cust@test.pk", password: "NewPassword1", role: "customer" });
+  check("login with new password", r.status === 200);
+  r = await anon.post("/user/forgot-password", { email: "nobody@test.pk" });
+  check("forgot-password unknown email gives same generic 200", r.status === 200 && r.data.success);
+  r = await anon.post("/user/forgot-password", { email: "cust@test.pk" });
+  await sleep(300);
+  const link = (serverLog.match(/Reset link for cust@test\.pk: (\S+)/) || [])[1];
+  check("reset link produced (console fallback, no SMTP)", !!link, link);
+  const token = link ? new URL(link).searchParams.get("token") : "";
+  check("reset link points at the frontend URL", link?.startsWith(ORIGIN + "/reset-password?token="));
+  r = await anon.post("/user/reset-password", { token: "0".repeat(64), password: "Another12345" });
+  check("reset with wrong token -> 400", r.status === 400);
+  r = await anon.post("/user/reset-password", { token, password: "short" });
+  check("reset with short password -> 400", r.status === 400);
+  r = await anon.post("/user/reset-password", { token, password: "ResetPass999" });
+  check("reset with valid token ok", r.status === 200);
+  r = await anon.post("/user/reset-password", { token, password: "ResetPass888" });
+  check("reset token is single-use", r.status === 400);
+  r = await new Client("tmp2").post("/user/login", { email: "cust@test.pk", password: "ResetPass999", role: "customer" });
+  check("login with reset password", r.status === 200);
+  await cust.post("/user/login", { email: "cust@test.pk", password: "ResetPass999", role: "customer" });
+  const rawUser = await mongoose.connect(MONGO).then(() => mongoose.connection.db.collection("users").findOne({ email: "cust@test.pk" }));
+  check("reset token stored only as hash", rawUser.resetTokenHash === "" && !JSON.stringify(rawUser).includes(token));
+  check("password stored hashed (bcrypt)", rawUser.password.startsWith("$2"));
+  await mongoose.disconnect();
+
+  section("PROFILE PICTURE (fake Cloudinary server; real SDK + real backend code)");
+  r = await cust.post("/user/profile-image", undefined, { form: png() });
+  check("upload png -> 200 with image URL", r.status === 200 && r.data.user.profileImage.includes("fake_1"), JSON.stringify(r.data).slice(0, 200));
+  check("public_id never exposed by API", !JSON.stringify(r.data).includes("profileImagePublicId"));
+  const f1 = cloud.uploads[0];
+  check("image bytes actually reached Cloudinary endpoint", f1 && f1.hasPng);
+  r = await cust.post("/user/profile-image", undefined, { form: png() });
+  check("replace picture -> new URL", r.status === 200 && r.data.user.profileImage.includes("fake_2"));
+  await sleep(200);
+  check("old image deleted from Cloudinary on replace", cloud.destroys.some((d) => d.includes("fake_1")), JSON.stringify(cloud.destroys));
+  r = await cust.del("/user/profile-image");
+  check("remove picture -> empty URL", r.status === 200 && r.data.user.profileImage === "");
+  await sleep(200);
+  check("image deleted from Cloudinary on remove", cloud.destroys.some((d) => d.includes("fake_2")));
+  const bad = new FormData(); bad.append("image", new Blob(["hello"], { type: "text/plain" }), "x.txt");
+  r = await cust.post("/user/profile-image", undefined, { form: bad });
+  check("non-image rejected (400)", r.status === 400);
+  r = await anon.post("/user/profile-image", undefined, { form: png() });
+  check("upload without login -> 401", r.status === 401);
+  const uploadsBefore = cloud.uploads.length;
+  const bad2 = new FormData(); bad2.append("image", new Blob([Buffer.alloc(4 * 1024 * 1024, 1)], { type: "image/png" }), "big.png");
+  r = await cust.post("/user/profile-image", undefined, { form: bad2 });
+  check("4MB image rejected before reaching Cloudinary", r.status === 400 && cloud.uploads.length === uploadsBefore);
+  await cust.post("/user/profile-image", undefined, { form: png() }); // leave a picture set for later (driver card)
+
+  section("ADMIN LOGIN + VERIFY DRIVERS");
+  r = await admin.post("/user/login", { email: "admin@test.pk", password: "AdminPass123", role: "admin" });
+  check("admin login", r.status === 200 && r.data.user.role === "admin");
+  r = await cust.get("/admin/stats");
+  check("customer cannot reach admin API (403)", r.status === 403);
+  r = await d1.get("/admin/customers");
+  check("driver cannot reach admin API (403)", r.status === 403);
+  r = await anon.get("/admin/stats");
+  check("anonymous cannot reach admin API (401)", r.status === 401);
+  r = await d1.patch("/user/driver-status", { status: "online" });
+  check("unverified driver cannot go online (403)", r.status === 403);
+  const dl = await admin.get("/admin/drivers");
+  if (!dl.data.drivers) console.log("admin/drivers ->", dl.status, JSON.stringify(dl.data));
+  const list = dl.data.drivers;
+  const id1 = list.find((d) => d.email === "d1@test.pk")._id, id2 = list.find((d) => d.email === "d2@test.pk")._id;
+  const custId = (await cust.get("/user/profile")).data.user._id;
+  r = await admin.patch(`/admin/user/${id1}/verify`, {});
+  check("admin verifies driver 1", r.status === 200 && r.data.user.isVerified);
+  await admin.patch(`/admin/user/${id2}/verify`, {});
+  r = await admin.patch(`/admin/user/${custId}/verify`, {});
+  check("verify on a customer id -> 404", r.status === 404);
+  r = await admin.patch("/admin/user/not-an-id/verify", {});
+  check("malformed id -> 400 (not 500)", r.status === 400);
+
+  section("SOCKET AUTH + DRIVER ONLINE");
+  const bogus = ioClient(BASE, { extraHeaders: { origin: ORIGIN }, transports: ["websocket"], reconnection: false });
+  const bogusErr = await new Promise((res) => { bogus.on("connect_error", (e) => res(e.message)); bogus.on("connect", () => res("CONNECTED")); setTimeout(() => res("timeout"), 3000); });
+  check("socket without cookie is rejected", bogusErr === "unauthorized", bogusErr);
+  let sCust = cust.socket(); const sCust2 = cust2.socket(), sD1 = d1.socket(), sD2 = d2.socket();
+  await sleep(800);
+  check("authenticated sockets connect", sCust.connected && sCust2.connected && sD1.connected && sD2.connected);
+  r = await d1.patch("/user/driver-status", { status: "online" });
+  check("driver 1 online", r.status === 200 && r.data.user.driverStatus === "online");
+  await d2.patch("/user/driver-status", { status: "online" });
+
+  section("RIDE: race condition on creation");
+  const results = await Promise.all([1, 2, 3, 4, 5, 6].map(() => cust.post("/ride/create", rideBody())));
+  const codes = results.map((x) => x.status).sort().join(",");
+  check("6 simultaneous ride requests -> exactly one 201", results.filter((x) => x.status === 201).length === 1 && results.filter((x) => x.status === 409).length === 5, codes);
+  const rideId = results.find((x) => x.status === 201).data.ride._id;
+  const ridesInDb = (await admin.get("/admin/rides")).data.rides.filter((x) => x.customer?._id === custId);
+  check("only ONE ride document exists in the database", ridesInDb.length === 1);
+  await sleep(600);
+  check("driver 1 got live 'New Ride Request' notification", events(sD1, "notification:new").some((e) => e.p.type === "new_ride_request"));
+  check("driver 2 got it too", events(sD2, "notification:new").some((e) => e.p.type === "new_ride_request"));
+  check("notification has pickup/destination/fare", (() => { const n = events(sD1, "notification:new")[0].p; return n.meta.pickup === "Bannu Cantt" && n.meta.destination === "Domel" && n.meta.offeredFare === 200; })());
+  check("unrelated customer got NO driver notification", events(sCust2, "notification:new").length === 0);
+  check("customer did not receive the drivers' request alert", events(sCust, "notification:new").length === 0);
+  r = await d1.get("/notification");
+  check("notification persisted (REST) with unread count", r.data.unreadCount >= 1 && r.data.notifications[0].read === false);
+  const nId = r.data.notifications[0]._id;
+  r = await d1.patch(`/notification/${nId}/read`);
+  check("mark one read", r.status === 200 && r.data.notification.read);
+  r = await d2.patch(`/notification/${nId}/read`);
+  check("cannot mark someone else's notification (404)", r.status === 404);
+  r = await d1.get("/ride/available");
+  const avail = r.data.rides.find((x) => x._id === rideId);
+  check("driver sees available ride", !!avail);
+  check("available ride hides customer phone", !JSON.stringify(avail).includes("03001234568"));
+  r = await cust2.get(`/ride/${rideId}`);
+  check("other customer cannot view the ride (403)", r.status === 403);
+  r = await cust.post("/delivery/create", delBody());
+  check("customer may also create a delivery while having a ride (separate service)", r.status === 201, JSON.stringify(r.data));
+  const deliveryId = r.data.delivery._id;
+  const cancelDel = await cust.patch(`/delivery/cancel/${deliveryId}`);
+  check("customer cancels a pending delivery", cancelDel.status === 200 && cancelDel.data.delivery.status === "cancelled");
+  r = await cust.post("/delivery/create", delBody());
+  check("after cancelling, the lock is released (new delivery allowed)", r.status === 201);
+  const delivery2Id = r.data.delivery._id;
+  await cust.patch(`/delivery/cancel/${delivery2Id}`);
+
+  section("RIDE: InDrive-style offers + customer selection (race)");
+  let o1 = await d1.post(`/ride/${rideId}/offer`, { fare: 260 });
+  check("driver 1 sends a counter-offer (Rs 260)", o1.status === 200 && o1.data.offer.kind === "counter" && o1.data.offer.fare === 260, JSON.stringify(o1.data));
+  const o2 = await d2.post(`/ride/${rideId}/offer`, {});
+  check("driver 2 accepts the customer's fare (no fare sent)", o2.status === 200 && o2.data.offer.kind === "accept" && o2.data.offer.fare === 200);
+  r = await d1.post(`/ride/${rideId}/offer`, { fare: 0 });
+  check("invalid counter fare rejected (400)", r.status === 400);
+  r = await d1.post(`/ride/${rideId}/offer`, { fare: "abc" });
+  check("non-numeric counter fare rejected (400)", r.status === 400);
+  o1 = await d1.post(`/ride/${rideId}/offer`, { fare: 270 });
+  check("re-offering updates the same offer (one per driver)", o1.status === 200 && o1.data.offer.fare === 270);
+  await sleep(500);
+  check("customer notified of the driver offers (socket)", events(sCust, "notification:new").filter((e) => e.p.type === "ride_offer").length >= 2);
+  check("customer got ride:offers live event", events(sCust, "ride:offers").length >= 2);
+  r = await d1.get("/ride/available");
+  check("driver's own pending offer shown on the request (myOffer)", r.data.rides.find((x) => x._id === rideId)?.myOffer?.fare === 270);
+  r = await cust2.get(`/ride/${rideId}/offers`);
+  check("another customer cannot list the offers (404)", r.status === 404);
+  r = await d1.get(`/ride/${rideId}/offers`);
+  check("a driver cannot list the offers (403)", r.status === 403);
+  r = await cust.get(`/ride/${rideId}/offers`);
+  const offers = r.data.offers;
+  check("customer sees exactly 2 offers, cheapest first", offers.length === 2 && offers[0].fare === 200 && offers[1].fare === 270, JSON.stringify(offers.map((x) => x.fare)));
+  const card = offers[1];
+  check("offer card has name, photo field, rating, completed rides, vehicle", !!card.driver.name && "profileImage" in card.driver && card.driver.rating.count === 0 && card.driver.completedRides === 0 && card.driver.vehicleNumber && card.driver.vehicleModel === "Qingqi");
+  check("offer card does NOT leak phone/email", !JSON.stringify(card).includes("0310") && !JSON.stringify(card).includes("@test.pk"));
+  const offA = offers.find((x) => x.driver._id === id1), offB = offers.find((x) => x.driver._id === id2);
+  r = await cust2.post(`/ride/${rideId}/select-offer`, { offerId: offA._id });
+  check("another customer cannot select (404)", r.status === 404);
+  r = await cust.post(`/ride/${rideId}/select-offer`, { offerId: "nope" });
+  check("malformed offerId -> 400", r.status === 400);
+  const sel = await Promise.all([cust.post(`/ride/${rideId}/select-offer`, { offerId: offA._id }), cust.post(`/ride/${rideId}/select-offer`, { offerId: offB._id })]);
+  check("selecting two different offers at once: exactly ONE succeeds", sel.filter((x) => x.status === 200).length === 1 && sel.filter((x) => x.status === 409).length === 1, sel.map((x) => x.status).join(","));
+  const aWon = sel[0].status === 200;
+  const winner = aWon ? d1 : d2, loser = aWon ? d2 : d1;
+  const sWin = aWon ? sD1 : sD2, sLose = aWon ? sD2 : sD1;
+  const winFare = aWon ? 270 : 200;
+  await sleep(500);
+  check("selected ride carries the chosen offer's fare (agreedFare)", sel.find((x) => x.status === 200).data.ride.agreedFare === winFare);
+  check("selected driver got 'You were selected' notification", events(sWin, "notification:new").some((e) => e.p.type === "driver_selected"));
+  check("losing driver told the request is unavailable (socket)", events(sLose, "request:unavailable").length >= 1);
+  r = await loser.get("/ride/available");
+  check("request vanished from loser's list", !r.data.rides.some((x) => x._id === rideId));
+  r = await loser.post(`/ride/${rideId}/offer`, {});
+  check("driver cannot offer on a ride that already has a driver (409)", r.status === 409);
+  r = await cust.post(`/ride/${rideId}/select-offer`, { offerId: aWon ? offB._id : offA._id });
+  check("selecting again after assignment -> 409", r.status === 409);
+  check("customer notified: driver confirmed (socket)", events(sCust, "notification:new").some((e) => e.p.type === "ride_accepted"));
+  check("customer got ride:updated event", events(sCust, "ride:updated").some((e) => e.p.status === "accepted"));
+  r = await cust.get("/ride/my-rides");
+  const dr = r.data.ride.driver;
+  check("customer sees driver name/vehicle/rating", !!dr.name && dr.vehicleType === "rickshaw" && dr.vehicleModel === "Qingqi" && dr.rating.count === 0);
+  check("driver card does not leak internal fields", !("driverStatus" in dr) && !("password" in dr) && !("email" in dr));
+  r = await winner.patch(`/ride/complete/${rideId}`);
+  check("cannot complete before start (409)", r.status === 409);
+  r = await loser.patch(`/ride/start/${rideId}`);
+  check("non-assigned driver cannot start (403)", r.status === 403);
+  r = await winner.patch(`/delivery/accept/${deliveryId}`);
+  check("driver with active ride cannot accept more work", r.status === 409 || r.status === 400, String(r.status));
+  r = await cust.patch(`/ride/cancel/${rideId}`, { reason: "Changed my plans" });
+  // (cancel after accept is allowed by design; re-create flow below uses a second ride) -> restore by new ride
+  check("customer can cancel an accepted ride (with a reason)", r.status === 200 && r.data.ride.cancelReason === "Changed my plans" && r.data.ride.cancelledBy === "customer", JSON.stringify(r.data).slice(0, 200));
+  await sleep(300);
+  check("assigned driver told ride was cancelled, with the reason", events(winner === d1 ? sD1 : sD2, "notification:new").some((e) => e.p.type === "ride_cancelled" && e.p.message.includes("Changed my plans")));
+
+  section("RIDE: full happy path with live GPS");
+  const ride2 = (await cust.post("/ride/create", rideBody(250))).data.ride._id;
+  await sleep(300);
+  r = await d1.post(`/ride/${ride2}/offer`, { fare: 300 });
+  check("driver 1 counter-offers Rs 300 on ride 2", r.status === 200 && r.data.offer.kind === "counter");
+  r = await d2.patch(`/ride/accept/${ride2}`);
+  check("legacy PATCH /ride/accept still works (now = offer at customer's fare)", r.status === 200 && r.data.offer.kind === "accept" && r.data.offer.fare === 250, JSON.stringify(r.data));
+  r = await cust.get(`/ride/${ride2}/offers`);
+  const pick = r.data.offers.find((x) => x.driver._id === id1);
+  check("customer sees both offers (250 and 300)", r.data.offers.length === 2);
+  r = await cust.post(`/ride/${ride2}/select-offer`, { offerId: pick._id });
+  check("customer selects driver 1 at Rs 300", r.status === 200 && r.data.ride.status === "accepted" && r.data.ride.agreedFare === 300 && r.data.ride.driver.name === "Driver One", JSON.stringify(r.data).slice(0, 200));
+  r = await d2.get(`/ride/available`);
+  check("driver 2's request list no longer shows ride 2", !r.data.rides.some((x) => x._id === ride2));
+  r = await d2.patch(`/ride/arrived/${ride2}`);
+  check("unassigned driver cannot mark arrival (403)", r.status === 403);
+  r = await d1.patch(`/ride/arrived/${ride2}`);
+  check("assigned driver marks 'I've arrived'", r.status === 200 && !!r.data.arrivedAt);
+  await sleep(300);
+  check("customer notified: driver arrived", events(sCust, "notification:new").some((e) => e.p.type === "driver_arrived"));
+  r = await d1.patch(`/ride/arrived/${ride2}`);
+  check("marking arrival twice -> 409", r.status === 409);
+  r = await cust.get(`/ride/${ride2}`);
+  check("customer sees arrivedAt (waiting timer source)", !!r.data.ride.arrivedAt);
+  sCust.events.length = 0; sCust2.events.length = 0; sD2.events.length = 0;
+  r = await d1.patch("/user/location", { latitude: 32.9801, longitude: 70.6101, accuracy: 12 });
+  check("driver posts GPS location", r.status === 200);
+  await sleep(500);
+  const loc = events(sCust, "driver:location");
+  check("assigned customer receives live driver location instantly", loc.length === 1 && loc[0].p.location.latitude === 32.9801 && loc[0].p.serviceId === ride2);
+  check("unrelated customer receives NO location", events(sCust2, "driver:location").length === 0);
+  check("other driver receives NO location", events(sD2, "driver:location").length === 0);
+  r = await d1.patch("/user/location", { latitude: 999, longitude: 70 });
+  check("invalid coordinates rejected (400)", r.status === 400);
+  r = await d1.patch("/user/location", { latitude: "32.9", longitude: "70.6" });
+  check("string coordinates rejected (400)", r.status === 400);
+  r = await cust.get(`/ride/${ride2}`);
+  check("customer REST view shows driver's latest position while active", r.data.ride.driver.currentLocation?.latitude === 32.9801);
+  r = await d1.patch(`/ride/start/${ride2}`);
+  check("driver starts ride", r.status === 200 && r.data.ride.status === "started");
+  check("customer notified: trip started", events(sCust, "notification:new").some((e) => e.p.type === "ride_started"));
+  r = await d1.patch("/user/location", { latitude: 32.9801, longitude: 70.6102 });
+  check("an update right after the previous one is throttled, not broadcast", r.status === 200 && r.data.throttled === true && events(sCust, "driver:location").length === 1);
+  await sleep(1700);
+  await d1.patch("/user/location", { latitude: 32.9808, longitude: 70.6108 });
+  await sleep(300);
+  check("second location update streams too", events(sCust, "driver:location").length === 2);
+  await sleep(1700);
+  r = await d1.patch("/user/location", { latitude: 24.86, longitude: 67.0 });
+  check("a GPS jump of ~800 km in 2 seconds is refused (422) and not broadcast", r.status === 422 && events(sCust, "driver:location").length === 2);
+  r = await d1.patch("/user/location", { latitude: 51.5, longitude: -0.12 });
+  check("a position outside Pakistan is refused (422)", r.status === 422);
+  await sleep(1700);
+  r = await d1.patch("/user/location", { latitude: 32.9809, longitude: 70.6109, accuracy: 9000 });
+  check("a useless GPS accuracy (9 km) is refused (422)", r.status === 422);
+  const sReconnect = cust.socket(); await sleep(400);
+  r = await cust.get(`/ride/${ride2}`);
+  check("after a socket reconnect the customer re-syncs the driver's last known position over REST (with its timestamp)", r.data.ride.driver.currentLocation?.latitude === 32.9808 && !!r.data.ride.driver.currentLocation.updatedAt);
+  sReconnect.close();
+  r = await d1.patch("/user/driver-status", { status: "offline" });
+  check("driver cannot go offline during a trip (409)", r.status === 409);
+  r = await d1.patch(`/ride/complete/${ride2}`);
+  check("driver completes ride", r.status === 200 && r.data.ride.status === "completed");
+  check("customer notified: trip completed", events(sCust, "notification:new").some((e) => e.p.type === "ride_completed"));
+  r = await cust.get(`/ride/${ride2}`);
+  check("driver location NOT exposed after completion", r.data.ride.driver && !r.data.ride.driver.currentLocation);
+  sCust.events.length = 0;
+  await d1.patch("/user/location", { latitude: 32.97, longitude: 70.62 });
+  await sleep(300);
+  check("no location pushed to customer after trip ended", events(sCust, "driver:location").length === 0);
+  r = await d1.patch(`/ride/complete/${ride2}`);
+  check("completing twice -> 409 (no double earnings)", r.status === 409);
+
+  section("EARNINGS / COMMISSION");
+  r = await d1.get("/payment/my-transactions");
+  const t = r.data.transactions;
+  check("transaction uses the AGREED fare (Rs 300), not the original 250", t.length === 1 && t[0].fare === 300);
+  check("default commission 15%: 45 commission / 255 earning", t[0].commissionAmount === 45 && t[0].driverEarning === 255, JSON.stringify(t[0]));
+  check("driver totals (net/commission/fare)", r.data.totalEarning === 255 && r.data.totalCommission === 45 && r.data.totalFare === 300);
+  r = await cust.get("/payment/my-transactions");
+  check("customer cannot read driver earnings endpoint (403)", r.status === 403);
+
+  section("RATINGS");
+  r = await cust.post("/rating/submit", { serviceType: "ride", serviceId: ride2, rating: 5, review: "Great driver" });
+  check("customer rates completed ride", r.status === 201);
+  r = await cust.post("/rating/submit", { serviceType: "ride", serviceId: ride2, rating: 1 });
+  check("duplicate rating blocked (409)", r.status === 409);
+  r = await cust2.post("/rating/submit", { serviceType: "ride", serviceId: ride2, rating: 1 });
+  check("another customer cannot rate it (404)", r.status === 404);
+  r = await cust.post("/rating/submit", { serviceType: "ride", serviceId: rideId, rating: 4 });
+  check("cannot rate a cancelled ride (409)", r.status === 409);
+  r = await cust.post("/rating/submit", { serviceType: "ride", serviceId: ride2, rating: 9 });
+  check("rating 9 rejected (400)", r.status === 400);
+  r = await d1.post("/rating/submit", { serviceType: "ride", serviceId: ride2, rating: 5 });
+  check("driver cannot submit ratings (403)", r.status === 403);
+  const dup = await Promise.all([1, 2, 3].map(() => cust.post("/rating/submit", { serviceType: "ride", serviceId: ride2, rating: 3 })));
+  check("parallel duplicate ratings all blocked", dup.every((x) => x.status === 409));
+  r = await d1.get("/rating/received");
+  check("driver sees average 5 and 1 rating", r.data.count === 1 && r.data.average === 5 && r.data.ratings[0].review === "Great driver");
+  r = await d1.get("/user/profile");
+  check("driver profile carries rating summary", r.data.user.ratingSummary.count === 1);
+
+  section("COMPLAINTS");
+  r = await cust.post("/complaint/submit", { subject: "Driver was late", description: "Waited 20 minutes", serviceType: "ride", serviceId: ride2, priority: "high" });
+  check("customer submits complaint about own ride", r.status === 201 && r.data.complaint.priority === "high");
+  const cid = r.data.complaint._id;
+  r = await cust2.post("/complaint/submit", { subject: "x", description: "y", serviceType: "ride", serviceId: ride2 });
+  check("cannot complain about someone else's ride (404)", r.status === 404);
+  sCust.events.length = 0;
+  r = await admin.patch(`/complaint/status/${cid}`, { status: "resolved", adminResponse: "Sorry, we spoke to the driver." });
+  check("admin resolves with response", r.status === 200 && r.data.complaint.status === "resolved");
+  await sleep(300);
+  check("customer notified: complaint updated (socket)", events(sCust, "notification:new").some((e) => e.p.type === "complaint_updated"));
+  r = await cust.get("/complaint/my-complaints");
+  check("customer sees status + admin response", r.data.complaints[0].adminResponse.includes("spoke to the driver") && r.data.complaints[0].status === "resolved");
+  r = await cust.patch(`/complaint/status/${cid}`, { status: "rejected" });
+  check("customer cannot change complaint status (403)", r.status === 403);
+  r = await admin.patch(`/complaint/status/${cid}`, { status: "bogus" });
+  check("invalid status -> 400", r.status === 400);
+
+  section("DELIVERY (separate flow)");
+  r = await cust.post("/delivery/create", { ...delBody(), receiverPhone: "abc" });
+  check("invalid receiver phone -> 400", r.status === 400);
+  r = await cust.post("/delivery/create", delBody(350));
+  check("create delivery", r.status === 201 && r.data.delivery.parcelType === "document");
+  const del = r.data.delivery._id;
+  await sleep(500);
+  check("driver notified of delivery request", events(sD1, "notification:new").some((e) => e.p.type === "new_delivery_request"));
+  r = await d1.get("/delivery/available");
+  const ad = r.data.deliveries.find((x) => x._id === del);
+  check("driver sees parcel details but NOT receiver phone before accepting", ad && ad.packageDescription === "Books" && !("receiverPhone" in ad));
+  r = await d1.get("/delivery/available?q=Mithakhel");
+  check("backend filter by destination works", r.data.deliveries.length === 1);
+  r = await d1.get("/delivery/available?q=zzzz");
+  check("backend filter with no match returns empty", r.data.deliveries.length === 0);
+  const dacc = await Promise.all([d1.patch(`/delivery/accept/${del}`), d2.patch(`/delivery/accept/${del}`)]);
+  check("delivery accept race: exactly one winner", dacc.filter((x) => x.status === 200).length === 1 && dacc.filter((x) => x.status === 409).length === 1);
+  const dw = dacc[0].status === 200 ? d1 : d2;
+  r = await dw.get("/delivery/active");
+  check("winner sees receiver phone after accepting", r.data.delivery.receiverPhone === "03211234567");
+  await admin.patch("/payment/settings", { commissionPercentage: 20 });
+  r = await dw.patch(`/delivery/start/${del}`);
+  check("start delivery", r.status === 200);
+  await dw.patch("/user/location", { latitude: 32.98, longitude: 70.61 });
+  sCust.events.length = 0;
+  r = await dw.patch(`/delivery/complete/${del}`);
+  check("complete delivery", r.status === 200 && r.data.delivery.status === "completed");
+  await sleep(300);
+  check("customer notified: delivery completed", events(sCust, "notification:new").some((e) => e.p.type === "delivery_completed"));
+  r = await dw.get("/payment/my-transactions");
+  const dt = r.data.transactions.find((x) => x.serviceType === "delivery");
+  check("commission changed by admin to 20% applied: 70 / 280", dt && dt.commissionAmount === 70 && dt.driverEarning === 280, JSON.stringify(dt));
+  r = await cust.post("/rating/submit", { serviceType: "delivery", serviceId: del, rating: 4, review: "Fast" });
+  check("customer rates delivery", r.status === 201);
+  r = await cust.get("/rating/ratable");
+  check("ratable list no longer contains rated items", r.data.ratable.length === 0);
+
+  section("HISTORY + FILTERS");
+  r = await cust.get("/ride/history");
+  check("customer ride history = completed + cancelled", r.data.rides.length === 2);
+  r = await cust.get("/ride/history?status=completed");
+  check("history filter status=completed", r.data.rides.length === 1 && r.data.rides[0].status === "completed");
+  r = await cust.get("/ride/history?q=domel");
+  check("history text search", r.data.rides.length === 2);
+  r = await cust.get("/ride/history?from=2999-01-01");
+  check("history date filter (future) returns none", r.data.rides.length === 0);
+  r = await d1.get("/ride/history");
+  check("driver history only shows own trips", r.data.rides.every((x) => x.driver?._id === (r.data.rides[0].driver?._id)) && r.data.rides.length >= 1);
+  r = await cust2.get("/ride/history");
+  check("other customer's history is empty (no leakage)", r.data.rides.length === 0);
+  r = await cust.get("/delivery/history");
+  check("delivery history has completed + cancelled", r.data.deliveries.length === 3);
+
+  section("ADMIN MONITORING");
+  r = await admin.get("/admin/stats");
+  const st = r.data.stats;
+  check("stats: customers=2 drivers=2", st.totalCustomers === 2 && st.totalDrivers === 2);
+  check("stats: rides=2 (1 completed, 1 cancelled)", st.totalRides === 2 && st.completedRides === 1 && st.cancelledRides === 1);
+  check("stats: deliveries=3, 1 completed", st.totalDeliveries === 3 && st.completedDeliveries === 1);
+  check("stats: revenue=650 commission=115", st.totalRevenue === 650 && st.totalCommissionEarned === 115, `${st.totalRevenue}/${st.totalCommissionEarned}`);
+  check("stats: online drivers counted", st.onlineDrivers === 2);
+  check("recent activity present", r.data.recentActivity.length >= 4);
+  r = await admin.get("/admin/customers?q=umair");
+  check("admin customer search", r.data.customers.length === 1);
+  r = await admin.get("/admin/customers?q=%24ne");
+  check("admin search with regex chars is safe", r.status === 200 && r.data.customers.length === 0);
+  r = await admin.get("/admin/drivers?verified=true&driverStatus=online");
+  check("admin driver filter (verified+online)", r.data.drivers.length === 2 && r.data.drivers.some((d) => d.rating.count >= 1), JSON.stringify(r.data.drivers?.map((d) => [d.name, d.isVerified, d.driverStatus, d.rating])));
+  r = await admin.get("/admin/rides?status=completed");
+  check("admin ride status filter", r.data.rides.length === 1);
+  r = await admin.get("/admin/deliveries?status=cancelled");
+  check("admin delivery status filter", r.data.deliveries.length === 2);
+  r = await admin.get("/admin/ratings?rating=5");
+  check("admin ratings filter", r.data.count === 1);
+  r = await admin.get("/admin/reports");
+  const rep = r.data.report;
+  check("admin report: revenue, commission, driver earnings add up", rep.revenue === 650 && rep.commission === 115 && rep.driverEarnings === 535, JSON.stringify([rep.revenue, rep.commission, rep.driverEarnings]));
+  check("admin report: top drivers sum to total earnings", rep.topDrivers.length >= 1 && rep.topDrivers.reduce((a, d) => a + d.earnings, 0) === 535 && rep.topDrivers.every((d) => d.name.startsWith("Driver")), JSON.stringify(rep.topDrivers));
+  check("admin report: trip counts + daily revenue", rep.rides.completed === 1 && rep.deliveries.completed === 1 && rep.daily.length === 1 && rep.daily[0].fare === 650, JSON.stringify(rep.daily));
+  r = await admin.get("/payment/all");
+  check("admin all transactions + totals", r.data.transactions.length === 2 && r.data.totalCommission === 115);
+  r = await admin.patch("/payment/settings", { commissionPercentage: 150 });
+  check("commission > 100 rejected", r.status === 400);
+  r = await admin.get(`/admin/user/${id1}`);
+  check("admin user details with earnings", r.status === 200 && r.data.user.stats && r.data.user.earnings);
+  r = await admin.patch(`/admin/user/${custId}/block`, { isBlocked: true });
+  check("admin blocks customer", r.status === 200 && r.data.user.isBlocked);
+  r = await anon.post("/user/login", { email: "cust@test.pk", password: "ResetPass999", role: "customer" });
+  check("blocked customer cannot log in (403)", r.status === 403);
+  r = await cust.get("/user/profile");
+  check("blocked customer's existing session is rejected", r.status === 401 || r.status === 403, String(r.status));
+  await admin.patch(`/admin/user/${custId}/block`, { isBlocked: false });
+  // Blocking now revokes every session, so the customer signs in again after being unblocked
+  await cust.post("/user/login", { email: "cust@test.pk", password: "ResetPass999", role: "customer" });
+  sCust.disconnect(); sCust = cust.socket(); await sleep(400); // the block closed the old socket on purpose
+  r = await admin.get("/admin/user/" + (await admin.get("/user/profile")).data.user._id);
+  r = await admin.patch(`/admin/user/${(await admin.get("/user/profile")).data.user._id}/block`, { isBlocked: true });
+  check("admin accounts cannot be blocked", r.status === 403);
+  r = await admin.patch(`/admin/user/${id2}/verify`, { isVerified: false });
+  check("admin un-verifies a driver", r.status === 200 && !r.data.user.isVerified);
+  r = await d2.get("/user/profile");
+  check("un-verified driver is forced offline", r.data.user.driverStatus === "offline");
+
+  // =====================================================================
+  //                         INTERCITY COACH BOOKING
+  // =====================================================================
+  const pk = (d = 0) => new Date(Date.now() + 5 * 3600e3 + d * 86400e3).toISOString().slice(0, 10);
+  const atPk = (day, hhmm) => new Date(`${day}T${hhmm}:00+05:00`).toISOString();
+  const tomorrow = pk(1);
+  const cust3 = new Client("cust3"), cust4 = new Client("cust4"), opA = new Client("opA"), opB = new Client("opB"), demoOp = new Client("demoOp");
+  const reg = (c, body) => c.post("/user/registration", body);
+
+  section("COACH: operator role, approval, access control");
+  r = await reg(opA, { name: "Operator A", email: "opa@test.pk", password: "Password123", phone: "03441110001", role: "operator", companyName: "Alpha Coaches" });
+  check("operator registers (201) and gets a session", r.status === 201 && r.data.user.role === "operator" && opA.cookie.includes("safarx-bannu="), JSON.stringify(r.data));
+  await reg(opB, { name: "Operator B", email: "opb@test.pk", password: "Password123", phone: "03441110002", role: "operator", companyName: "Beta Travels" });
+  r = await reg(anon, { name: "NoCo", email: "noco@test.pk", password: "Password123", phone: "03441110003", role: "operator" });
+  check("operator without company name -> 400 (and no orphan user)", r.status === 400);
+  await reg(cust3, { name: "Customer Three", email: "c3@test.pk", password: "Password123", phone: "03331110003", role: "customer" });
+  await reg(cust4, { name: "Customer Four", email: "c4@test.pk", password: "Password123", phone: "03331110004", role: "customer" });
+  r = await new Client("t").post("/user/login", { email: "opa@test.pk", password: "Password123", role: "operator" });
+  check("operator can log in with role=operator", r.status === 200 && r.data.user.role === "operator");
+  r = await new Client("t").post("/user/login", { email: "opa@test.pk", password: "Password123", role: "customer" });
+  check("operator cannot log in as customer (401)", r.status === 401);
+  r = await opA.get("/user/profile");
+  check("operator profile includes company", r.data.user.operator?.companyName === "Alpha Coaches" && r.data.user.isVerified === false);
+  r = await opA.get("/coach/operator/me");
+  check("unapproved operator can read own profile, approved=false", r.status === 200 && r.data.approved === false);
+  r = await opA.post("/coach/operator/coaches", { name: "Early Bird", layout: { rows: 2, left: 2, right: 2 } });
+  check("unapproved operator cannot add coaches (403)", r.status === 403);
+  for (const [who, name] of [[cust, "customer"], [d1, "driver"]]) {
+    r = await who.get("/coach/operator/coaches");
+    check(`${name} cannot use operator APIs (403)`, r.status === 403, `status=${r.status} ${JSON.stringify(r.data)}`);
+  }
+  r = await anon.get("/coach/operator/coaches");
+  check("anonymous cannot use operator APIs (401)", r.status === 401);
+  r = await opA.get("/admin/stats");
+  check("operator cannot use admin APIs (403)", r.status === 403);
+  r = await opA.get("/coach/admin/operators");
+  check("operator cannot use coach admin APIs (403)", r.status === 403);
+  r = await cust.get("/coach/admin/stats");
+  check("customer cannot use coach admin APIs (403)", r.status === 403, `status=${r.status} ${JSON.stringify(r.data)}`);
+  r = await opA.post("/ride/create", rideBody());
+  check("operator cannot create rides (403)", r.status === 403);
+  r = await opA.get("/coach/search?from=Bannu&to=Lahore&date=" + tomorrow);
+  check("operator cannot use the customer search (403)", r.status === 403);
+
+  r = await admin.get("/coach/admin/operators?status=pending");
+  check("admin sees pending operators", r.status === 200 && r.data.operators.length >= 2 && r.data.operators.every((o) => !o.approved));
+  const opAid = r.data.operators.find((o) => o.companyName === "Alpha Coaches")._id, opBid = r.data.operators.find((o) => o.companyName === "Beta Travels")._id;
+  r = await admin.patch(`/coach/admin/operators/${opAid}/approve`, { approved: "yes" });
+  check("approve needs a boolean (400)", r.status === 400);
+  sOpA = opA.socket(); await sleep(500);
+  r = await admin.patch(`/coach/admin/operators/${opAid}/approve`, { approved: true });
+  await admin.patch(`/coach/admin/operators/${opBid}/approve`, { approved: true });
+  check("admin approves operators", r.status === 200);
+  await sleep(300);
+  check("operator notified of approval", events(sOpA, "notification:new").some((e) => e.p.type === "account_verified"));
+
+  section("COACH: coaches, routes, schedules (operator A)");
+  r = await opA.post("/coach/operator/coaches", { name: "Bad", layout: { rows: 0, left: 2, right: 2 } });
+  check("invalid layout rejected (400)", r.status === 400);
+  r = await opA.post("/coach/operator/coaches", { name: "Bad", layout: { rows: 3, left: 2, right: 2, blocked: ["99"] } });
+  check("blocked seat that does not exist rejected (400)", r.status === 400);
+  r = await opA.post("/coach/operator/coaches", { name: "Alpha Mini", type: "minibus", amenities: ["AC"], layout: { rows: 3, left: 2, right: 2, blocked: ["02"] } });
+  check("operator adds a 12-seat coach with 1 blocked seat -> 11 sellable", r.status === 201 && r.data.coach.totalSeats === 11, JSON.stringify(r.data).slice(0, 160));
+  const coachA = r.data.coach._id;
+  r = await opA.post("/coach/operator/coaches", { name: "Alpha Two", layout: { rows: 2, left: 2, right: 2 } });
+  const coachA2 = r.data.coach._id;
+  r = await opB.post("/coach/operator/coaches", { name: "Beta Bus", layout: { rows: 2, left: 1, right: 1 } });
+  const coachB = r.data.coach._id;
+  r = await opA.patch(`/coach/operator/coaches/${coachB}`, { name: "Hacked" });
+  check("operator A cannot edit operator B's coach (404)", r.status === 404);
+  r = await opA.get("/coach/operator/coaches");
+  check("operator A only sees own coaches", r.data.coaches.length === 2 && r.data.coaches.every((c) => c.name.startsWith("Alpha")));
+  r = await opA.post("/coach/operator/routes", { fromCity: "Bannu", toCity: "Bannu" });
+  check("route with identical cities rejected (400)", r.status === 400);
+  r = await opA.post("/coach/operator/routes", { fromCity: "Bannu", toCity: "Lahore", distanceKm: 480, durationMin: 480 });
+  check("operator adds route Bannu -> Lahore (no city is hard-coded)", r.status === 201);
+  const routeA = r.data.route._id;
+  r = await opA.post("/coach/operator/routes", { fromCity: " bannu ", toCity: "LAHORE" });
+  check("duplicate route (case/space-insensitive) -> 409", r.status === 409);
+  r = await opB.post("/coach/operator/routes", { fromCity: "Peshawar", toCity: "Islamabad" });
+  const routeB = r.data.route._id;
+  check("operator B adds route Peshawar -> Islamabad", r.status === 201);
+  r = await opA.patch(`/coach/operator/routes/${routeB}`, { isActive: false });
+  check("operator A cannot edit operator B's route (404)", r.status === 404);
+
+  const depDay = atPk(tomorrow, "10:00");
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA, routeId: routeA, departureAt: depDay, fare: 0 });
+  check("fare 0 rejected (400)", r.status === 400);
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA, routeId: routeA, departureAt: new Date(Date.now() - 3600e3).toISOString(), fare: 1500 });
+  check("departure in the past rejected (400)", r.status === 400);
+  r = await opA.post("/coach/operator/schedules", { coachId: coachB, routeId: routeA, departureAt: depDay, fare: 1500 });
+  check("schedule using another operator's coach rejected (404)", r.status === 404);
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA, routeId: routeB, departureAt: depDay, fare: 1500 });
+  check("schedule using another operator's route rejected (404)", r.status === 404);
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA, routeId: routeA, departureAt: depDay, fare: 1500, repeatDays: 2 });
+  check("operator creates a schedule repeated for 3 days", r.status === 201 && r.data.schedules.length === 3, JSON.stringify(r.data).slice(0, 200));
+  const schedA = r.data.schedules[0]._id;
+  check("arrival defaults from the route duration (8h)", new Date(r.data.schedules[0].arrivalAt) - new Date(r.data.schedules[0].departureAt) === 480 * 60000);
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA, routeId: routeA, departureAt: depDay, fare: 1500 });
+  check("same coach at the same time -> 409", r.status === 409);
+  r = await opB.post("/coach/operator/schedules", { coachId: coachB, routeId: routeB, departureAt: atPk(tomorrow, "09:00"), arrivalAt: atPk(tomorrow, "11:00"), fare: 800 });
+  const schedB = r.data.schedules[0]._id;
+  check("operator B creates own schedule", r.status === 201);
+  r = await opA.patch(`/coach/operator/schedules/${schedB}`, { fare: 1 });
+  check("operator A cannot edit operator B's schedule (404)", r.status === 404);
+  r = await opA.patch(`/coach/operator/schedules/${schedB}/cancel`, {});
+  check("operator A cannot cancel operator B's schedule (404)", r.status === 404);
+  r = await opA.get("/coach/operator/schedules");
+  check("operator A only lists own schedules", r.data.schedules.length === 3 && r.data.schedules.every((x) => x.toCity === "Lahore"));
+  r = await opA.patch(`/coach/operator/schedules/${schedA}`, { fare: 1600 });
+  check("operator edits fare of own schedule", r.status === 200 && r.data.schedule.fare === 1600);
+  await opA.patch(`/coach/operator/schedules/${schedA}`, { fare: 1500 });
+
+  section("COACH: demo data (Adil Coaches - DEMO)");
+  r = await cust.post("/coach/admin/demo/seed", {});
+  check("customer cannot seed demo data (403)", r.status === 403);
+  r = await admin.post("/coach/admin/demo/seed", {});
+  check("admin seeds demo data", r.status === 200 && r.data.schedulesCreated >= 30 && r.data.credentials?.email, JSON.stringify(r.data));
+  const demoCreds = r.data.credentials;
+  r = await admin.post("/coach/admin/demo/seed", {});
+  check("seeding twice is idempotent (no duplicates, no new credentials)", r.status === 200 && r.data.schedulesCreated === 0 && !r.data.credentials);
+  r = await demoOp.post("/user/login", { email: demoCreds.email, password: demoCreds.password, role: "operator" });
+  check("demo operator can log in", r.status === 200 && r.data.user.isVerified === true);
+  sDemo = demoOp.socket(); await sleep(400);
+
+  section("COACH: customer search");
+  const q = (f, t, d) => cust.get(`/coach/search?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&date=${d}`);
+  r = await cust.get("/coach/cities");
+  check("cities come from the database (Bannu, Peshawar, Islamabad, Lahore)", ["Bannu", "Peshawar", "Islamabad", "Lahore"].every((c) => [...r.data.from, ...r.data.to].includes(c)), JSON.stringify(r.data.pairs));
+  r = await q("Bannu", "Peshawar", tomorrow);
+  const dpe = r.data.schedules.filter((x) => x.operator.companyName === "Adil Coaches - DEMO");
+  check("search Bannu -> Peshawar shows the 2 demo departures", r.status === 200 && dpe.length === 2, JSON.stringify(r.data.schedules?.map((x) => x.operator.companyName)));
+  const d8 = dpe.find((x) => new Date(x.departureAt).toISOString().includes("T03:00"));
+  check("demo 08:00 departure, Rs 1200, 40 seats, arrives 4h later", d8 && d8.fare === 1200 && d8.totalSeats === 40 && d8.availableSeats === 40 && new Date(d8.arrivalAt) - new Date(d8.departureAt) === 240 * 60000 && d8.operator.isDemo, JSON.stringify(d8));
+  check("result has coach name/type and bookable flag", d8.coach.name.includes("DEMO") && d8.bookable === true);
+  r = await q("bannu", "ISLAMABAD", tomorrow);
+  check("search is case-insensitive; Bannu -> Islamabad demo Rs 2200", r.data.schedules.some((x) => x.fare === 2200 && x.operator.companyName === "Adil Coaches - DEMO"));
+  r = await q("Bannu", "Lahore", tomorrow);
+  check("search Bannu -> Lahore finds operator A's schedule", r.data.schedules.length === 1 && r.data.schedules[0].operator.companyName === "Alpha Coaches" && r.data.schedules[0].totalSeats === 11);
+  r = await q("Peshawar", "Islamabad", tomorrow);
+  check("Peshawar -> Islamabad works too (any city pair)", r.data.schedules.length === 1 && r.data.schedules[0].operator.companyName === "Beta Travels");
+  r = await q("Lahore", "Bannu", tomorrow);
+  check("reverse direction with no service returns an empty list", r.status === 200 && r.data.schedules.length === 0);
+  r = await q("Bannu", "Bannu", tomorrow);
+  check("same from/to -> 400", r.status === 400);
+  r = await q("Bannu", "Lahore", "tomorrow");
+  check("invalid date -> 400", r.status === 400);
+  r = await q("Bannu", "Lahore", pk(-3));
+  check("past date -> empty", r.status === 200 && r.data.schedules.length === 0);
+  const sidA = (await q("Bannu", "Lahore", tomorrow)).data.schedules[0]._id;
+
+  section("COACH: seat map");
+  r = await cust.get(`/coach/schedules/${sidA}`);
+  check("seat map has 12 seats; blocked seat 02 flagged; 11 available", r.status === 200 && r.data.seats.length === 12 && r.data.seats.find((x) => x.label === "02").status === "BLOCKED" && r.data.schedule.availableSeats === 11);
+  check("layout returned for rendering (3 rows, 2+2)", r.data.layout.rows === 3 && r.data.layout.left === 2 && r.data.layout.right === 2);
+  r = await cust.get(`/coach/schedules/000000000000000000000000`);
+  check("unknown schedule -> 404", r.status === 404);
+  r = await cust.get(`/coach/schedules/abc`);
+  check("malformed schedule id -> 400", r.status === 400);
+
+  section("COACH: booking validation");
+  const P = (name = "Passenger One", phone = "03451234567") => ({ name, phone, gender: "male" });
+  const book = (client, seats, sid = sidA) => client.post("/coach/bookings", { scheduleId: sid, seats });
+  r = await book(cust, [{ seat: "99", passenger: P() }]);
+  check("non-existent seat -> 400", r.status === 400);
+  r = await book(cust, [{ seat: "02", passenger: P() }]);
+  check("blocked seat -> 409", r.status === 409);
+  r = await book(cust, [{ seat: "01", passenger: { name: "X", phone: "03451234567" } }]);
+  check("passenger name too short -> 400", r.status === 400);
+  r = await book(cust, [{ seat: "01", passenger: P("Ok Name", "123") }]);
+  check("invalid passenger phone -> 400", r.status === 400);
+  r = await book(cust, []);
+  check("no seats -> 400", r.status === 400);
+  r = await book(cust, ["01", "03", "04", "05", "06"].map((seat) => ({ seat, passenger: P() })));
+  check("more than 4 seats in one booking -> 400", r.status === 400);
+  r = await book(cust, [{ seat: "01", passenger: P() }, { seat: "01", passenger: P() }]);
+  check("same seat twice in one request -> 400", r.status === 400);
+  r = await cust.post("/coach/bookings", { scheduleId: "nope", seats: [{ seat: "01", passenger: P() }] });
+  check("malformed schedule id -> 400", r.status === 400);
+  r = await cust.post("/coach/bookings", { scheduleId: "000000000000000000000000", seats: [{ seat: "01", passenger: P() }] });
+  check("non-existent schedule -> 404", r.status === 404);
+  r = await d1.post("/coach/bookings", { scheduleId: sidA, seats: [{ seat: "01", passenger: P() }] });
+  check("driver cannot book coach seats (403)", r.status === 403);
+  r = await anon.post("/coach/bookings", { scheduleId: sidA, seats: [{ seat: "01", passenger: P() }] });
+  check("anonymous cannot book (401)", r.status === 401);
+  r = await cust.post("/coach/bookings", { scheduleId: sidA, seats: { seat: "01" } });
+  check("seats must be a list (400)", r.status === 400);
+
+  section("COACH: booking + live seat events + notifications");
+  const sC3 = cust3.socket(), sC4 = cust4.socket(); sOpA.events.length = 0; await sleep(500);
+  sC3.emit("coach:watch", sidA); await sleep(300);
+  sCust.events.length = 0;
+  r = await cust.post("/coach/bookings", { scheduleId: sidA, fare: 1, totalFare: 1, status: "CANCELLED", operator: opBid, seats: [{ seat: "01", fare: 1, status: "CANCELLED", passenger: P("Umair Shah", "03451112222") }] });
+  check("booking created (201), CONFIRMED", r.status === 201 && r.data.bookings[0].status === "CONFIRMED", JSON.stringify(r.data).slice(0, 220));
+  const bk = r.data.bookings[0];
+  check("booking code format BD-XXXXXX", /^BD-[A-Z2-9]{6}$/.test(bk.bookingCode), bk.bookingCode);
+  check("fare comes from the server (Rs 1500), client values ignored", bk.fare === 1500 && r.data.totalFare === 1500);
+  check("booking belongs to the schedule's operator (client operatorId ignored)", bk.operator.companyName === "Alpha Coaches");
+  check("booking carries route, times, passenger, seat, operator", bk.fromCity === "Bannu" && bk.toCity === "Lahore" && bk.seat === "01" && bk.passenger.name === "Umair Shah" && !!bk.departureAt && !!bk.arrivalAt && bk.coach.name === "Alpha Mini");
+  await sleep(500);
+  check("operator got live 'New coach booking' notification", events(sOpA, "notification:new").some((e) => e.p.type === "coach_booking_new" && e.p.message.includes("seat 01")));
+  check("customer got 'booking confirmed' notification", events(sCust, "notification:new").some((e) => e.p.type === "coach_booking_confirmed"));
+  const seatEv = events(sC3, "coach:seats");
+  check("another customer watching the seat map got live HELD then BOOKED updates (consecutive versions)", seatEv.length === 2 && seatEv[0].p.status === "HELD" && seatEv[1].p.status === "BOOKED" && seatEv[1].p.seats[0] === "01" && seatEv[1].p.availableSeats === 10 && seatEv[1].p.version === seatEv[0].p.version + 1, JSON.stringify(seatEv));
+  check("a socket that is NOT watching got no seat event", events(sC4, "coach:seats").length === 0);
+  check("seat event contains no personal data", !JSON.stringify(seatEv).includes("Umair") && !JSON.stringify(seatEv).includes("0345"));
+  r = await book(cust2, [{ seat: "01", passenger: P("Thief", "03451110000") }]);
+  check("same seat by another customer -> 409 with conflictSeats", r.status === 409 && r.data.conflictSeats?.[0] === "01", JSON.stringify(r.data));
+  r = await cust.get(`/coach/schedules/${sidA}`);
+  check("seat 01 now BOOKED, 10 available", r.data.seats.find((x) => x.label === "01").status === "BOOKED" && r.data.schedule.availableSeats === 10);
+
+  section("COACH: concurrency - double booking is impossible");
+  const racers = [cust, cust2, cust3, cust4];
+  const res8 = await Promise.all([...racers, ...racers].map((c, i) => book(c, [{ seat: "03", passenger: P("Racer " + i, "0345000000" + i) }])));
+  // A customer repeating the SAME request (double click / retry) now gets the SAME booking back, so count distinct bookings
+  const winners = new Set(res8.filter((x) => x.status === 201).map((x) => x.data.bookings[0].bookingCode));
+  const lost = res8.filter((x) => x.status === 409).length;
+  check("8 simultaneous requests for seat 03: exactly ONE booking is created", winners.size === 1 && res8.every((x) => [201, 409].includes(x.status)), res8.map((x) => x.status).join(","));
+  check("every request from the other 3 customers lost (409)", lost >= 6, String(lost));
+  r = await opA.get(`/coach/operator/bookings?scheduleId=${sidA}&status=CONFIRMED`);
+  check("database holds exactly one active booking for seat 03", r.data.bookings.filter((x) => x.seat === "03").length === 1);
+  const winnerClient = racers[res8.findIndex((x) => x.status === 201) % 4];
+  const sx = await Promise.all([book(cust2, [{ seat: "04", passenger: P("X1", "03451110041") }, { seat: "05", passenger: P("X2", "03451110042") }]), book(cust3, [{ seat: "05", passenger: P("Y1", "03451110051") }, { seat: "06", passenger: P("Y2", "03451110052") }])]);
+  check("overlapping multi-seat requests: exactly one wins", sx.filter((x) => x.status === 201).length === 1 && sx.filter((x) => x.status === 409).length === 1, sx.map((x) => x.status).join(","));
+  r = await cust.get(`/coach/schedules/${sidA}`);
+  const seatSt = Object.fromEntries(r.data.seats.map((x) => [x.label, x.status]));
+  const x1won = sx[0].status === 201;
+  check("all-or-nothing: loser's other seat was released", x1won ? (seatSt["04"] === "BOOKED" && seatSt["05"] === "BOOKED" && seatSt["06"] === "AVAILABLE") : (seatSt["05"] === "BOOKED" && seatSt["06"] === "BOOKED" && seatSt["04"] === "AVAILABLE"), JSON.stringify(seatSt));
+  r = await opA.get(`/coach/operator/bookings?scheduleId=${sidA}&status=CONFIRMED`);
+  const activeSeats = r.data.bookings.map((x) => x.seat);
+  check("no seat is held by two bookings", new Set(activeSeats).size === activeSeats.length, activeSeats.join(","));
+
+  section("COACH: booking history, details, ownership");
+  r = await cust.get("/coach/bookings/mine?tab=upcoming");
+  check("My Bookings (upcoming) lists the booking", r.status === 200 && r.data.bookings.some((x) => x._id === bk._id));
+  r = await cust.get(`/coach/bookings/${bk._id}`);
+  check("customer opens own booking", r.status === 200 && r.data.booking.bookingCode === bk.bookingCode);
+  r = await cust2.get(`/coach/bookings/${bk._id}`);
+  check("another customer cannot open it (404)", r.status === 404);
+  r = await opB.get(`/coach/bookings/${bk._id}`);
+  check("another operator cannot open it (404)", r.status === 404);
+  r = await opA.get(`/coach/bookings/${bk._id}`);
+  check("the owning operator can open it", r.status === 200);
+  r = await admin.get(`/coach/bookings/${bk._id}`);
+  check("admin can open it", r.status === 200);
+  r = await cust2.patch(`/coach/bookings/${bk._id}/cancel`, {});
+  check("another customer cannot cancel it (404)", r.status === 404);
+  r = await opB.patch(`/coach/operator/bookings/${bk._id}/cancel`, {});
+  check("another operator cannot cancel it (404)", r.status === 404);
+  r = await d1.patch(`/coach/bookings/${bk._id}/cancel`, {});
+  check("driver cannot cancel it (403)", r.status === 403);
+
+  section("COACH: customer cancellation frees the seat");
+  sOpA.events.length = 0; sC3.events.length = 0; sCust.events.length = 0;
+  r = await cust.patch(`/coach/bookings/${bk._id}/cancel`, { reason: "Plans changed" });
+  check("customer cancels: status CANCELLED, record kept", r.status === 200 && r.data.booking.status === "CANCELLED" && r.data.booking.cancelReason === "Plans changed" && r.data.booking.cancelledBy === "customer");
+  await sleep(500);
+  check("operator notified of the cancellation", events(sOpA, "notification:new").some((e) => e.p.type === "coach_booking_cancelled"));
+  check("customer notified of the cancellation", events(sCust, "notification:new").some((e) => e.p.type === "coach_booking_cancelled"));
+  check("watchers got a live AVAILABLE update", events(sC3, "coach:seats").some((e) => e.p.status === "AVAILABLE" && e.p.seats[0] === "01"));
+  r = await cust.patch(`/coach/bookings/${bk._id}/cancel`, {});
+  check("cancelling twice -> 409", r.status === 409);
+  r = await cust.get(`/coach/schedules/${sidA}`);
+  check("seat 01 is AVAILABLE again", r.data.seats.find((x) => x.label === "01").status === "AVAILABLE");
+  r = await book(cust2, [{ seat: "01", passenger: P("New Owner", "03451119999") }]);
+  check("the freed seat can be booked by someone else", r.status === 201);
+  const bk2 = r.data.bookings[0];
+  r = await cust.get("/coach/bookings/mine?tab=cancelled");
+  check("cancelled booking stays in history (Cancelled tab)", r.data.bookings.some((x) => x._id === bk._id && x.status === "CANCELLED"));
+  r = await cust.get("/coach/bookings/mine?tab=upcoming");
+  check("cancelled booking is not in Upcoming", !r.data.bookings.some((x) => x._id === bk._id));
+
+  section("COACH: operator tools");
+  sC3.events.length = 0;
+  r = await opA.patch(`/coach/operator/bookings/${bk2._id}/cancel`, { reason: "Coach breakdown" });
+  check("operator cancels a booking", r.status === 200 && r.data.booking.cancelledBy === "operator");
+  await sleep(400);
+  { const n = (await cust2.get("/notification")).data.notifications; check("customer was notified with the operator's reason", n.some((x) => x.type === "coach_booking_cancelled" && x.message.includes("Coach breakdown"))); }
+  r = await opA.get("/coach/operator/dashboard");
+  check("operator dashboard has stats, today's trips, upcoming, recent bookings", r.status === 200 && r.data.stats.upcomingSchedules === 3 && Array.isArray(r.data.todaysTrips) && r.data.recentBookings.length >= 1 && typeof r.data.stats.revenueTotal === "number", JSON.stringify(r.data.stats));
+  const confirmed = (await opA.get("/coach/operator/bookings?status=CONFIRMED")).data.bookings;
+  check("dashboard revenue = sum of confirmed fares", r.data.stats.revenueUpcoming === confirmed.reduce((a, b) => a + b.fare, 0), `${r.data.stats.revenueUpcoming} vs ${confirmed.length}`);
+  check("dashboard available seats are real (33 total - held)", r.data.stats.availableSeats === 33 - confirmed.length, `${r.data.stats.availableSeats} vs ${33 - confirmed.length}`);
+  r = await opA.get(`/coach/operator/bookings?scheduleId=${schedB}`);
+  check("operator A asking for operator B's schedule sees nothing", r.status === 200 && r.data.bookings.length === 0);
+  r = await opA.get(`/coach/operator/passengers?scheduleId=${schedB}`);
+  check("operator A cannot open operator B's passenger list (404)", r.status === 404);
+  r = await opA.get(`/coach/operator/passengers?scheduleId=${sidA}`);
+  check("passenger manifest for own trip, sorted by seat, with phone numbers", r.status === 200 && r.data.passengers.length === confirmed.length && r.data.passengers.every((p, i, a) => i === 0 || a[i - 1].seat <= p.seat) && r.data.passengers[0].phone);
+  r = await opA.get("/coach/operator/bookings?q=Racer");
+  check("operator can search bookings by passenger name", r.status === 200);
+  r = await opA.get("/coach/operator/reports");
+  check("operator report: revenue + by status + routes", r.status === 200 && r.data.report.revenue === confirmed.reduce((a, b) => a + b.fare, 0) && r.data.report.byStatus.CANCELLED >= 2 && r.data.report.routes[0].route === "Bannu → Lahore");
+  r = await opA.patch(`/coach/operator/schedules/${sidA}`, { departureAt: atPk(tomorrow, "12:00") });
+  check("cannot move a trip that already has bookings (409)", r.status === 409);
+
+  section("COACH: cutoff rules");
+  const soon = new Date(Date.now() + 90 * 60000).toISOString();
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA2, routeId: routeA, departureAt: soon, arrivalAt: new Date(Date.now() + 5 * 3600e3).toISOString(), fare: 1000 });
+  const schedSoon = r.data.schedules?.[0]?._id;
+  check("operator creates a trip leaving in 90 minutes", r.status === 201);
+  r = await book(cust4, [{ seat: "01", passenger: P("Late Traveller", "03451110077") }], schedSoon);
+  check("can still book 90 minutes before departure", r.status === 201);
+  const bkSoon = r.data.bookings[0];
+  r = await cust4.patch(`/coach/bookings/${bkSoon._id}/cancel`, {});
+  check("customer cannot cancel within 2h of departure (409)", r.status === 409 && /2 hours/.test(r.data.message));
+  r = await cust4.get(`/coach/bookings/${bkSoon._id}`);
+  check("booking reports canCancel=false", r.data.booking.canCancel === false);
+  r = await opA.patch(`/coach/operator/bookings/${bkSoon._id}/cancel`, { reason: "Test" });
+  check("operator can still cancel inside the cutoff", r.status === 200);
+  const closing = new Date(Date.now() + 15 * 60000).toISOString();
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA, routeId: routeA, departureAt: closing, arrivalAt: new Date(Date.now() + 4 * 3600e3).toISOString(), fare: 1000 });
+  r = await book(cust4, [{ seat: "01", passenger: P("Too Late", "03451110078") }], r.data.schedules[0]._id);
+  check("booking closes 30 minutes before departure (409)", r.status === 409 && /closed/i.test(r.data.message));
+
+  section("COACH: completed trips");
+  await mongoose.connect(MONGO);
+  const col = mongoose.connection.db.collection("coachbookings");
+  r = await book(cust3, [{ seat: "12", passenger: P("Past Trip", "03451110088") }]);
+  const bkPast = r.data.bookings[0];
+  await col.updateOne({ bookingCode: bkPast.bookingCode }, { $set: { arrivalAt: new Date(Date.now() - 3600e3) } });
+  await mongoose.disconnect();
+  r = await cust3.get("/coach/bookings/mine?tab=completed");
+  check("a finished trip becomes COMPLETED automatically", r.data.bookings.some((x) => x.bookingCode === bkPast.bookingCode && x.status === "COMPLETED"));
+  r = await cust3.patch(`/coach/bookings/${bkPast._id}/cancel`, {});
+  check("a completed booking cannot be cancelled (409)", r.status === 409);
+
+  section("COACH: operator cancels a whole schedule");
+  r = await book(cust3, [{ seat: "07", passenger: P("Will Be Cancelled", "03451110091") }]);
+  const bkS = r.data.bookings[0]; sCust.events.length = 0;
+  const sCust3 = sC3; sC3.events.length = 0;
+  r = await opA.patch(`/coach/operator/schedules/${sidA}/cancel`, { reason: "Road closed" });
+  check("schedule cancelled with its bookings", r.status === 200 && r.data.cancelledBookings >= 1, JSON.stringify(r.data));
+  await sleep(500);
+  r = await cust3.get(`/coach/bookings/${bkS._id}`);
+  check("customer's booking is CANCELLED by the operator with the reason", r.data.booking.status === "CANCELLED" && r.data.booking.cancelledBy === "operator" && r.data.booking.cancelReason.includes("Road closed"));
+  check("customer was notified (socket)", events(sC3, "notification:new").some((e) => e.p.type === "coach_booking_cancelled"));
+  r = await book(cust4, [{ seat: "08", passenger: P("After Cancel", "03451110092") }]);
+  check("cancelled schedule cannot be booked (409)", r.status === 409);
+  r = await q("Bannu", "Lahore", tomorrow);
+  check("cancelled schedule disappears from search", !r.data.schedules.some((x) => x._id === sidA));
+  r = await opA.patch(`/coach/operator/schedules/${sidA}/cancel`, {});
+  check("cancelling twice -> 409", r.status === 409);
+
+  section("COACH: admin management");
+  r = await admin.get("/coach/admin/stats");
+  check("admin coach stats", r.status === 200 && r.data.stats.operators === 3 && r.data.stats.approvedOperators === 3 && r.data.stats.coaches >= 4 && r.data.stats.bookings.CANCELLED >= 3, JSON.stringify(r.data.stats));
+  r = await admin.get("/coach/admin/operators?q=alpha");
+  check("admin searches operators", r.data.operators.length === 1 && r.data.operators[0].coaches === 2);
+  r = await admin.get("/coach/admin/coaches?operatorId=" + opAid);
+  check("admin lists coaches by operator", r.data.coaches.length === 2);
+  r = await admin.get("/coach/admin/routes?q=lahore");
+  check("admin lists/searches routes", r.data.routes.length === 1);
+  r = await admin.get("/coach/admin/schedules?status=cancelled");
+  check("admin filters schedules by status", r.data.schedules.some((x) => x._id === sidA));
+  r = await admin.get("/coach/admin/bookings?status=CANCELLED");
+  check("admin lists cancelled bookings", r.data.bookings.length >= 3);
+  r = await admin.get("/coach/admin/bookings?status=COMPLETED");
+  check("admin lists completed bookings", r.data.bookings.some((x) => x.bookingCode === bkPast.bookingCode));
+  r = await admin.patch(`/coach/admin/coaches/${coachA2}/active`, { isActive: false });
+  check("admin deactivates a coach", r.status === 200);
+  r = await opA.post("/coach/operator/schedules", { coachId: coachA2, routeId: routeA, departureAt: atPk(pk(5), "10:00"), fare: 1000, arrivalAt: atPk(pk(5), "18:00") });
+  check("a deactivated coach cannot get new schedules (409)", r.status === 409);
+  r = await admin.patch(`/coach/admin/routes/${routeA}/active`, { isActive: false });
+  check("admin deactivates a route", r.status === 200);
+  await admin.patch(`/coach/admin/routes/${routeA}/active`, { isActive: true });
+
+  section("COACH: demo end-to-end (customer -> book -> operator sees it)");
+  r = await cust.get(`/coach/search?from=Bannu&to=Peshawar&date=${tomorrow}`);
+  const demoSched = r.data.schedules.find((x) => new Date(x.departureAt).toISOString().includes("T03:00"));
+  r = await cust.get(`/coach/schedules/${demoSched._id}`);
+  check("demo seat map: 40 seats, all available", r.data.seats.length === 40 && r.data.seats.every((x) => x.status === "AVAILABLE") && r.data.layout.rows === 10);
+  sDemo.events.length = 0;
+  r = await book(cust, [{ seat: "17", passenger: P("Umair Shah", "03451234567") }], demoSched._id);
+  const demoBk = r.data.bookings[0];
+  check("customer books demo seat 17 (Rs 1,200)", r.status === 201 && demoBk.seat === "17" && demoBk.fare === 1200 && demoBk.operator.companyName === "Adil Coaches - DEMO" && demoBk.status === "CONFIRMED", JSON.stringify(r.data).slice(0, 200));
+  await sleep(500);
+  check("demo operator is notified live", events(sDemo, "notification:new").some((e) => e.p.type === "coach_booking_new"));
+  r = await demoOp.get("/coach/operator/bookings");
+  check("demo operator sees the booking in Bookings", r.data.bookings.some((x) => x.bookingCode === demoBk.bookingCode && x.passenger.name === "Umair Shah"));
+  r = await demoOp.get("/coach/operator/dashboard");
+  check("demo operator dashboard shows it under recent bookings", r.data.recentBookings.some((x) => x.bookingCode === demoBk.bookingCode) && r.data.stats.totalBookings >= 1);
+  r = await opA.get(`/coach/bookings/${demoBk._id}`);
+  check("a different operator cannot see the demo booking (404)", r.status === 404);
+  r = await admin.get("/coach/admin/bookings?q=" + demoBk.bookingCode);
+  check("admin finds the booking by code", r.data.bookings.length === 1);
+
+  section("COACH: blocked operator hides their trips");
+  await admin.patch(`/admin/user/${(await admin.get("/coach/admin/operators?q=beta")).data.operators[0].user._id}/block`, { isBlocked: true });
+  r = await q("Peshawar", "Islamabad", tomorrow);
+  check("a blocked operator's trips disappear from search", r.data.schedules.length === 0);
+  r = await opB.get("/coach/operator/coaches");
+  check("a blocked operator is locked out of the API", r.status === 403 || r.status === 401);
+
+  section("COACH: demo purge");
+  r = await admin.del("/coach/admin/demo");
+  check("admin removes demo data (bookings are kept, trips with bookings cancelled)", r.status === 200 && r.data.removed > 0, JSON.stringify(r.data));
+  r = await cust.get(`/coach/bookings/${demoBk._id}`);
+  check("the customer's demo booking record is kept as CANCELLED", r.status === 200 && r.data.booking.status === "CANCELLED");
+  r = await cust.get(`/coach/search?from=Bannu&to=Peshawar&date=${tomorrow}`);
+  check("demo trips no longer appear in search", r.data.schedules.length === 0);
+
+  section("LOGOUT");
+  r = await cust.post("/user/login", { email: "cust@test.pk", password: "ResetPass999", role: "customer" });
+  r = await cust.post("/user/logout");
+  r = await cust.get("/user/profile");
+  check("logout clears the session", r.status === 401);
+} catch (e) {
+  fail++; failures.push("UNCAUGHT: " + e.message);
+  console.log("UNCAUGHT", e);
+  console.log("---- server log tail ----\n" + serverLog.slice(-3500));
+}
+
+console.log(`\n==== ${pass} passed, ${fail} failed ====`);
+if (failures.length) console.log("Failures:\n - " + failures.join("\n - "));
+server.kill(); fake.close();
+setTimeout(() => process.exit(fail ? 1 : 0), 300);

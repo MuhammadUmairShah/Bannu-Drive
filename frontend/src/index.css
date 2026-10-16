@@ -1,0 +1,407 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Sans:wght@400;500;600;700&display=swap");
+
+@import "tailwindcss";
+
+/* `dark:` is available for rare one-offs, but pages should use the tokens below. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ==========================================================================
+   BANNU DRIVE – DESIGN TOKENS
+   Every colour used by the UI comes from the variables below. The light
+   theme lives on :root (default); the dark theme overrides them when
+   <html data-theme="dark"> is set (see context/ThemeContext.jsx).
+   Pages use token utilities (bg-surface, text-fg, border-line ...), so they
+   never need dark: variants.
+   ========================================================================== */
+:root {
+  color-scheme: light;
+
+  --bd-bg: #f5f8f7;
+  --bd-surface: #ffffff;
+  --bd-surface-2: #eef4f2; /* table headers, hovers, quiet fills */
+  --bd-surface-3: #e1ebe8; /* pressed / progress tracks */
+  --bd-field: #f7faf9; /* input fill */
+  --bd-fg: #071f25;
+  --bd-muted: #4a615e;
+  --bd-subtle: #556d6a;
+  --bd-line: #e2eae8;
+  --bd-line-strong: #c3d2ce;
+  --bd-field-line: #8ca39e;
+
+  --bd-primary: #00a86b;
+  --bd-primary-hover: #008f5b;
+  --bd-on-primary: #ffffff;
+  --bd-primary-soft: rgb(0 168 107 / 0.1);
+  --bd-link: #00794e;
+  --bd-accent: #00a86b;
+
+  --bd-sidebar: #062c2c;
+  --bd-sidebar-fg: #e6f1ee;
+  --bd-sidebar-muted: #a9c4bf;
+  --bd-sidebar-line: rgb(255 255 255 / 0.08);
+  --bd-sidebar-hover: rgb(255 255 255 / 0.06);
+  --bd-sidebar-active: rgb(46 229 157 / 0.14);
+  --bd-sidebar-accent: #2ee59d;
+  --bd-sidebar-danger: #ff9a9a;
+
+  --bd-scrim: rgb(7 31 37 / 0.55);
+  --bd-shadow-card: 0 1px 2px rgb(7 31 37 / 0.04), 0 10px 28px -14px rgb(7 31 37 / 0.14);
+  --bd-shadow-pop: 0 24px 60px -18px rgb(7 31 37 / 0.35);
+
+  --bd-success: #0a7a4b;
+  --bd-success-soft: rgb(0 168 107 / 0.12);
+  --bd-warning: #92560a;
+  --bd-warning-soft: rgb(245 158 11 / 0.16);
+  --bd-danger: #b42323;
+  --bd-danger-soft: rgb(220 38 38 / 0.1);
+  --bd-danger-solid: #c62828;
+  --bd-danger-solid-hover: #a91f1f;
+  --bd-on-danger: #ffffff;
+  --bd-info: #1a56b0;
+  --bd-info-soft: rgb(37 99 235 / 0.1);
+  --bd-violet: #6232b8;
+  --bd-violet-soft: rgb(124 58 237 / 0.1);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bd-bg: #071f25;
+  --bd-surface: #0b3030;
+  --bd-surface-2: #0f3b3a;
+  --bd-surface-3: #164a48;
+  --bd-field: #082626;
+  --bd-fg: #f5f8f7;
+  --bd-muted: #a8c0bc;
+  --bd-subtle: #86a39e;
+  --bd-line: rgb(46 229 157 / 0.14);
+  --bd-line-strong: rgb(46 229 157 / 0.26);
+  --bd-field-line: rgb(168 192 188 / 0.45);
+
+  --bd-primary: #2ee59d;
+  --bd-primary-hover: #5cf0b5;
+  --bd-on-primary: #062c2c;
+  --bd-primary-soft: rgb(46 229 157 / 0.14);
+  --bd-link: #2ee59d;
+  --bd-accent: #2ee59d;
+
+  --bd-sidebar: #041d1d;
+  --bd-sidebar-fg: #e6f1ee;
+  --bd-sidebar-muted: #9db8b3;
+  --bd-sidebar-line: rgb(46 229 157 / 0.1);
+  --bd-sidebar-hover: rgb(255 255 255 / 0.05);
+  --bd-sidebar-active: rgb(46 229 157 / 0.16);
+
+  --bd-scrim: rgb(2 12 14 / 0.72);
+  /* dark surfaces get depth from borders + a faint top highlight, not drop shadows */
+  --bd-shadow-card: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 0 0 1px rgb(46 229 157 / 0.06);
+  --bd-shadow-pop: 0 24px 60px -12px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(46 229 157 / 0.12);
+
+  --bd-success: #4ee0a0;
+  --bd-success-soft: rgb(46 229 157 / 0.14);
+  --bd-warning: #f5c451;
+  --bd-warning-soft: rgb(245 196 81 / 0.14);
+  --bd-danger: #ff8f8f;
+  --bd-danger-soft: rgb(255 107 107 / 0.16);
+  --bd-danger-solid: #ff7a7a;
+  --bd-danger-solid-hover: #ff9494;
+  --bd-on-danger: #2b0a0a;
+  --bd-info: #7fb6ff;
+  --bd-info-soft: rgb(90 162 255 / 0.16);
+  --bd-violet: #b9a0ff;
+  --bd-violet-soft: rgb(169 139 255 / 0.16);
+}
+
+@theme inline {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Brand constants (identical in both themes – used for always-dark hero/footer sections) */
+  --color-brand: #00a86b;
+  --color-brand-deep: #008f5b;
+  --color-mint: #2ee59d;
+  --color-navy: #062c2c;
+  --color-ink: #071f25;
+  --color-mist: #f5f8f7;
+
+  /* Semantic, theme-aware */
+  --color-bg: var(--bd-bg);
+  --color-surface: var(--bd-surface);
+  --color-surface-2: var(--bd-surface-2);
+  --color-surface-3: var(--bd-surface-3);
+  --color-field: var(--bd-field);
+  --color-fg: var(--bd-fg);
+  --color-muted: var(--bd-muted);
+  --color-subtle: var(--bd-subtle);
+  --color-line: var(--bd-line);
+  --color-line-strong: var(--bd-line-strong);
+  --color-field-line: var(--bd-field-line);
+
+  --color-primary: var(--bd-primary);
+  --color-primary-hover: var(--bd-primary-hover);
+  --color-on-primary: var(--bd-on-primary);
+  --color-primary-soft: var(--bd-primary-soft);
+  --color-link: var(--bd-link);
+  --color-accent: var(--bd-accent);
+
+  --color-sidebar: var(--bd-sidebar);
+  --color-sidebar-fg: var(--bd-sidebar-fg);
+  --color-sidebar-muted: var(--bd-sidebar-muted);
+  --color-sidebar-line: var(--bd-sidebar-line);
+  --color-sidebar-hover: var(--bd-sidebar-hover);
+  --color-sidebar-active: var(--bd-sidebar-active);
+  --color-sidebar-accent: var(--bd-sidebar-accent);
+  --color-sidebar-danger: var(--bd-sidebar-danger);
+
+  --color-scrim: var(--bd-scrim);
+
+  --color-success: var(--bd-success);
+  --color-success-soft: var(--bd-success-soft);
+  --color-warning: var(--bd-warning);
+  --color-warning-soft: var(--bd-warning-soft);
+  --color-danger: var(--bd-danger);
+  --color-danger-soft: var(--bd-danger-soft);
+  --color-danger-solid: var(--bd-danger-solid);
+  --color-danger-solid-hover: var(--bd-danger-solid-hover);
+  --color-on-danger: var(--bd-on-danger);
+  --color-info: var(--bd-info);
+  --color-info-soft: var(--bd-info-soft);
+  --color-violet: var(--bd-violet);
+  --color-violet-soft: var(--bd-violet-soft);
+
+  --shadow-card: var(--bd-shadow-card);
+  --shadow-pop: var(--bd-shadow-pop);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  *,
+  ::before,
+  ::after {
+    border-color: var(--bd-line);
+  }
+
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--bd-primary);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--bd-subtle);
+    opacity: 1;
+  }
+
+  /* Native date/time pickers follow the theme through color-scheme; keep text readable */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"] {
+    min-height: 2.5rem;
+  }
+
+  ::selection {
+    background: var(--bd-primary);
+    color: var(--bd-on-primary);
+  }
+}
+
+@layer components {
+  /* ---------- Buttons (public site + anywhere a class is easier than <Button>) ---------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-sm font-semibold transition duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-on-primary shadow-lg shadow-primary/30 hover:-translate-y-0.5 hover:bg-primary-hover;
+  }
+
+  .btn-glass {
+    @apply border border-white/30 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20;
+  }
+
+  .btn-outline {
+    @apply border border-line-strong text-fg hover:border-primary hover:text-link;
+  }
+
+  .btn-dark {
+    @apply bg-fg text-bg hover:bg-primary hover:text-on-primary;
+  }
+
+  .container-x {
+    @apply mx-auto w-full max-w-7xl px-5 sm:px-6 lg:px-8;
+  }
+
+  .section {
+    @apply py-20 sm:py-24 lg:py-28;
+  }
+
+  .h2 {
+    @apply text-3xl font-extrabold text-fg sm:text-4xl lg:text-[2.75rem] lg:leading-[1.1];
+  }
+
+  .lead {
+    @apply text-base leading-7 text-muted sm:text-lg sm:leading-8;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] text-link before:h-px before:w-8 before:bg-primary;
+  }
+
+  /* ---------- Surfaces ---------- */
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+
+  .card-quiet {
+    @apply rounded-2xl border border-line bg-surface-2;
+  }
+
+  /* ---------- Form controls ---------- */
+  /* Icon-padded input used on the public booking panel */
+  .input {
+    @apply w-full rounded-xl border border-field-line bg-field py-3 pl-11 pr-4 text-sm text-fg outline-none transition placeholder:text-subtle focus:border-primary focus:ring-2 focus:ring-primary/25;
+  }
+
+  /* Plain input / select / textarea for dashboards and forms */
+  .field {
+    @apply w-full rounded-xl border border-field-line bg-field px-3.5 py-2.5 text-sm text-fg outline-none transition placeholder:text-subtle focus:border-primary focus:ring-2 focus:ring-primary/25 disabled:cursor-not-allowed disabled:border-line disabled:bg-surface-2 disabled:text-subtle;
+  }
+
+  .field-error {
+    @apply border-danger focus:border-danger focus:ring-danger/25;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-semibold text-fg;
+  }
+
+  /* ---------- Status pills ---------- */
+  .pill {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold capitalize;
+  }
+  .pill-success { @apply bg-success-soft text-success; }
+  .pill-warning { @apply bg-warning-soft text-warning; }
+  .pill-danger  { @apply bg-danger-soft text-danger; }
+  .pill-info    { @apply bg-info-soft text-info; }
+  .pill-violet  { @apply bg-violet-soft text-violet; }
+  .pill-neutral { @apply bg-surface-3 text-muted; }
+
+  /* ---------- Scrollbars ---------- */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bd-line-strong) transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--bd-line-strong); border-radius: 999px; }
+}
+
+/* ==========================================================================
+   Maps (Leaflet) – frames, controls and popups follow the theme.
+   The tile layer itself is swapped in components/map/MapView.jsx.
+   ========================================================================== */
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--bd-surface-2);
+}
+.leaflet-bar {
+  border: 1px solid var(--bd-line-strong) !important;
+  box-shadow: var(--bd-shadow-card) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background-color: var(--bd-surface);
+  color: var(--bd-fg);
+  border-bottom-color: var(--bd-line);
+}
+.leaflet-bar a:hover { background-color: var(--bd-surface-2); }
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--bd-surface);
+  color: var(--bd-fg);
+  box-shadow: var(--bd-shadow-pop);
+}
+.leaflet-popup-content-wrapper { border-radius: 14px; }
+.leaflet-container a.leaflet-popup-close-button { color: var(--bd-muted); }
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--bd-surface) 82%, transparent) !important;
+  color: var(--bd-muted) !important;
+}
+.leaflet-control-attribution a { color: var(--bd-link) !important; }
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
+@keyframes bd-rise {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: none; }
+}
+.bd-rise { animation: bd-rise 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@keyframes bd-drift {
+  from { transform: scale(1.04); }
+  to { transform: scale(1.12); }
+}
+.bd-drift { animation: bd-drift 22s ease-in-out infinite alternate; }
+
+@keyframes bd-dash {
+  to { stroke-dashoffset: -24; }
+}
+.bd-dash { animation: bd-dash 1.4s linear infinite; }
+
+/* Dashboard page entrance + staggered children (use .bd-stagger on a grid/list parent) */
+@keyframes bd-page {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.bd-page { animation: bd-page 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.bd-stagger > * { animation: bd-page 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.bd-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.bd-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.bd-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.bd-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.bd-stagger > *:nth-child(6) { animation-delay: 200ms; }
+.bd-stagger > *:nth-child(n + 7) { animation-delay: 240ms; }
+
+@keyframes bd-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.bd-fade { animation: bd-fade 0.2s ease-out both; }
+
+/* Dim photography slightly in dark mode so it doesn't glare against dark surfaces */
+[data-theme="dark"] .img-dim { filter: brightness(0.86) saturate(0.95); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  body { transition: none; }
+  .bd-rise, .bd-drift, .bd-dash, .bd-page, .bd-fade, .bd-stagger > * { animation: none; }
+}
+
+/* ---------- Printing: tickets, manifests, boarding lists ----------
+   Only the element marked .print-area is printed; navbar, sidebars, buttons and everything else disappear. */
+@media print {
+  html.printing body * { visibility: hidden !important; }
+  html.printing .print-area, html.printing .print-area * { visibility: visible !important; }
+  html.printing .print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 12px; box-shadow: none !important; background: #fff !important; color: #000 !important; }
+  html.printing .print-area .no-print { display: none !important; }
+  html.printing { background: #fff !important; }
+  .print\:hidden { display: none !important; }
+  @page { margin: 12mm; }
+}

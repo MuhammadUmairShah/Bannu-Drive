@@ -1,0 +1,18 @@
+# Render Blueprint: persistent Node service (REST + Socket.IO). Secrets are set in the dashboard (sync: false).
+services:
+  - type: web
+    name: bannu-drive-api
+    runtime: node
+    plan: starter            # a free instance sleeps; realtime needs an always-on instance
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: MONGO_URI, sync: false }
+      - { key: JWT_SECRET, sync: false }
+      - { key: CLIENT_URL, sync: false }
+      - { key: GOOGLE_CLIENT_ID, sync: false }
+      - { key: CLOUDINARY_CLOUD_NAME, sync: false }
+      - { key: CLOUDINARY_API_KEY, sync: false }
+      - { key: CLOUDINARY_API_SECRET, sync: false }
