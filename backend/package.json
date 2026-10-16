@@ -24,6 +24,7 @@
     "verify:indexes": "node scripts/verify-indexes.mjs"
   },
   "dependencies": {
+    "@google/genai": "^2.30.0",
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.11.0",
     "cookie-parser": "^1.4.7",

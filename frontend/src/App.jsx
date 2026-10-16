@@ -5,7 +5,7 @@ import {
   Navigate,
   useLocation,
 } from 'react-router-dom';
-import { useEffect } from "react";
+import { useEffect } from 'react';
 
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -48,7 +48,7 @@ import CoachSeats from './pages/customer/CoachSeats';
 import CoachCheckout from './pages/customer/CoachCheckout';
 import MockPay from './pages/customer/MockPay';
 import CoachBookings from './pages/customer/CoachBookings';
-import TrackCoach from './pages/customer/TrackCoach'; // NEW: live coach tracking
+import TrackCoach from './pages/customer/TrackCoach';
 
 // Driver Pages
 import DriverDashboard from './pages/driver/DriverDashboard';
@@ -76,7 +76,7 @@ import {
   AdminCoaches,
   AdminRoutes,
   AdminSchedules,
-  AdminCoachBookings
+  AdminCoachBookings,
 } from './pages/admin/CoachAdmin';
 
 import AdminVerification from './pages/admin/Verification';
@@ -94,18 +94,23 @@ import OperatorReports from './pages/operator/OperatorReports';
 import OperatorProfile from './pages/operator/OperatorProfile';
 import OperatorSeatMap from './pages/operator/OperatorSeatMap';
 import OperatorScan from './pages/operator/OperatorScan';
-import OperatorPayments from './pages/operator/OperatorPayments'; // wallet payments (EasyPaisa / JazzCash) to verify
-import OperatorTripTracking from './pages/operator/OperatorTripTracking'; // NEW: share live location of a trip
+import OperatorPayments from './pages/operator/OperatorPayments';
+import OperatorTripTracking from './pages/operator/OperatorTripTracking';
 
 // Global
 import ToastHost from './components/ToastHost';
+import AIChatbot from './components/AIChatbot';
 import { RealtimeProvider } from './context/RealtimeContext';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: 'instant',
+    });
   }, [pathname]);
 
   return null;
@@ -122,121 +127,383 @@ export default function App() {
 
             <ToastHost />
 
+            {/* =========================================
+                GLOBAL AI CHATBOT
+                Available on the entire website
+            ========================================== */}
+            <AIChatbot />
+
             <Routes>
 
               {/* ===================== PUBLIC ROUTES ===================== */}
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/about" element={<AboutPage />} />
-              <Route path="/services" element={<ServicesPage />} />
-              <Route path="/coaches" element={<CoachesPage />} />
-              <Route path="/contact" element={<ContactPage />} />
+
+              <Route
+                path="/"
+                element={<LandingPage />}
+              />
+
+              <Route
+                path="/about"
+                element={<AboutPage />}
+              />
+
+              <Route
+                path="/services"
+                element={<ServicesPage />}
+              />
+
+              <Route
+                path="/coaches"
+                element={<CoachesPage />}
+              />
+
+              <Route
+                path="/contact"
+                element={<ContactPage />}
+              />
 
               {/* ===================== AUTH ROUTES ===================== */}
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
+
+              <Route
+                path="/login"
+                element={<Login />}
+              />
+
+              <Route
+                path="/register"
+                element={<Register />}
+              />
+
+              <Route
+                path="/forgot-password"
+                element={<ForgotPassword />}
+              />
+
+              <Route
+                path="/reset-password"
+                element={<ResetPassword />}
+              />
 
               {/* ===================== CUSTOMER ROUTES ===================== */}
+
               <Route
                 path="/customer"
                 element={
-                  <ProtectedRoute allowedRoles={["customer"]}>
+                  <ProtectedRoute allowedRoles={['customer']}>
                     <CustomerLayout />
                   </ProtectedRoute>
                 }
               >
-                <Route index element={<CustomerDashboard />} />
-                <Route path="request-ride" element={<RequestRide />} />
-                <Route path="request-delivery" element={<RequestDelivery />} />
-                <Route path="intercity" element={<Intercity />} />
-                <Route path="intercity/:scheduleId" element={<CoachSeats />} />
-                <Route path="checkout/:orderId" element={<CoachCheckout />} />
-                <Route path="pay/mock/:ref" element={<MockPay />} />
-                <Route path="bookings" element={<CoachBookings />} />
-                <Route path="bookings/:id" element={<CoachBookings />} />
-                <Route path="track/:bookingId" element={<TrackCoach />} />
-                <Route path="requests" element={<MyRequests />} />
-                <Route path="requests/:id" element={<RequestDetails />} />
-                <Route path="ride-history" element={<CustomerRideHistory />} />
-                <Route path="delivery-history" element={<CustomerDeliveryHistory />} />
-                <Route path="ratings" element={<Ratings />} />
-                <Route path="complaints" element={<CustomerComplaints />} />
-                <Route path="profile" element={<CustomerProfile />} />
+                <Route
+                  index
+                  element={<CustomerDashboard />}
+                />
+
+                <Route
+                  path="request-ride"
+                  element={<RequestRide />}
+                />
+
+                <Route
+                  path="request-delivery"
+                  element={<RequestDelivery />}
+                />
+
+                <Route
+                  path="intercity"
+                  element={<Intercity />}
+                />
+
+                <Route
+                  path="intercity/:scheduleId"
+                  element={<CoachSeats />}
+                />
+
+                <Route
+                  path="checkout/:orderId"
+                  element={<CoachCheckout />}
+                />
+
+                <Route
+                  path="pay/mock/:ref"
+                  element={<MockPay />}
+                />
+
+                <Route
+                  path="bookings"
+                  element={<CoachBookings />}
+                />
+
+                <Route
+                  path="bookings/:id"
+                  element={<CoachBookings />}
+                />
+
+                <Route
+                  path="track/:bookingId"
+                  element={<TrackCoach />}
+                />
+
+                <Route
+                  path="requests"
+                  element={<MyRequests />}
+                />
+
+                <Route
+                  path="requests/:id"
+                  element={<RequestDetails />}
+                />
+
+                <Route
+                  path="ride-history"
+                  element={<CustomerRideHistory />}
+                />
+
+                <Route
+                  path="delivery-history"
+                  element={<CustomerDeliveryHistory />}
+                />
+
+                <Route
+                  path="ratings"
+                  element={<Ratings />}
+                />
+
+                <Route
+                  path="complaints"
+                  element={<CustomerComplaints />}
+                />
+
+                <Route
+                  path="profile"
+                  element={<CustomerProfile />}
+                />
               </Route>
 
               {/* ===================== DRIVER ROUTES ===================== */}
+
               <Route
                 path="/driver"
                 element={
-                  <ProtectedRoute allowedRoles={["driver"]}>
+                  <ProtectedRoute allowedRoles={['driver']}>
                     <DriverLayout />
                   </ProtectedRoute>
                 }
               >
-                <Route index element={<DriverDashboard />} />
-                <Route path="requests" element={<AvailableRequests />} />
-                <Route path="requests/active" element={<ManageTrip />} />
-                <Route path="requests/:id" element={<AcceptedRequest />} />
-                <Route path="ride-history" element={<DriverRideHistory />} />
-                <Route path="delivery-history" element={<DriverDeliveryHistory />} />
-                <Route path="earnings" element={<Earnings />} />
-                <Route path="profile" element={<DriverProfile />} />
+                <Route
+                  index
+                  element={<DriverDashboard />}
+                />
+
+                <Route
+                  path="requests"
+                  element={<AvailableRequests />}
+                />
+
+                <Route
+                  path="requests/active"
+                  element={<ManageTrip />}
+                />
+
+                <Route
+                  path="requests/:id"
+                  element={<AcceptedRequest />}
+                />
+
+                <Route
+                  path="ride-history"
+                  element={<DriverRideHistory />}
+                />
+
+                <Route
+                  path="delivery-history"
+                  element={<DriverDeliveryHistory />}
+                />
+
+                <Route
+                  path="earnings"
+                  element={<Earnings />}
+                />
+
+                <Route
+                  path="profile"
+                  element={<DriverProfile />}
+                />
               </Route>
 
               {/* ===================== OPERATOR ROUTES ===================== */}
+
               <Route
                 path="/operator"
                 element={
-                  <ProtectedRoute allowedRoles={["operator"]}>
+                  <ProtectedRoute allowedRoles={['operator']}>
                     <OperatorLayout />
                   </ProtectedRoute>
                 }
               >
-                <Route index element={<OperatorDashboard />} />
-                <Route path="coaches" element={<OperatorCoaches />} />
-                <Route path="routes" element={<OperatorRoutes />} />
-                <Route path="schedules" element={<OperatorSchedules />} />
-                <Route path="schedules/:id/seatmap" element={<OperatorSeatMap />} />
-                <Route path="schedules/:id/tracking" element={<OperatorTripTracking />} />
-                <Route path="scan" element={<OperatorScan />} />
-                <Route path="bookings" element={<OperatorBookings />} />
-                <Route path="payments" element={<OperatorPayments />} />
-                <Route path="passengers" element={<OperatorPassengers />} />
-                <Route path="reports" element={<OperatorReports />} />
-                <Route path="profile" element={<OperatorProfile />} />
+                <Route
+                  index
+                  element={<OperatorDashboard />}
+                />
+
+                <Route
+                  path="coaches"
+                  element={<OperatorCoaches />}
+                />
+
+                <Route
+                  path="routes"
+                  element={<OperatorRoutes />}
+                />
+
+                <Route
+                  path="schedules"
+                  element={<OperatorSchedules />}
+                />
+
+                <Route
+                  path="schedules/:id/seatmap"
+                  element={<OperatorSeatMap />}
+                />
+
+                <Route
+                  path="schedules/:id/tracking"
+                  element={<OperatorTripTracking />}
+                />
+
+                <Route
+                  path="scan"
+                  element={<OperatorScan />}
+                />
+
+                <Route
+                  path="bookings"
+                  element={<OperatorBookings />}
+                />
+
+                <Route
+                  path="payments"
+                  element={<OperatorPayments />}
+                />
+
+                <Route
+                  path="passengers"
+                  element={<OperatorPassengers />}
+                />
+
+                <Route
+                  path="reports"
+                  element={<OperatorReports />}
+                />
+
+                <Route
+                  path="profile"
+                  element={<OperatorProfile />}
+                />
               </Route>
 
               {/* ===================== ADMIN ROUTES ===================== */}
+
               <Route
                 path="/admin"
                 element={
-                  <ProtectedRoute allowedRoles={["admin"]}>
+                  <ProtectedRoute allowedRoles={['admin']}>
                     <AdminLayout />
                   </ProtectedRoute>
                 }
               >
-                <Route index element={<AdminDashboard />} />
-                <Route path="customers" element={<Customers />} />
-                <Route path="drivers" element={<Drivers />} />
-                <Route path="rides" element={<RideRequests />} />
-                <Route path="deliveries" element={<DeliveryRequests />} />
-                <Route path="complaints" element={<Complaints />} />
-                <Route path="ratings" element={<AdminRatings />} />
-                <Route path="reports" element={<Reports />} />
-                <Route path="settings" element={<Settings />} />
-                <Route path="verification" element={<AdminVerification />} />
-                <Route path="audit-log" element={<AuditLog />} />
-                <Route path="coach-payments" element={<CoachPayments />} />
-                <Route path="operators" element={<AdminOperators />} />
-                <Route path="coaches" element={<AdminCoaches />} />
-                <Route path="coach-routes" element={<AdminRoutes />} />
-                <Route path="coach-schedules" element={<AdminSchedules />} />
-                <Route path="coach-bookings" element={<AdminCoachBookings />} />
+                <Route
+                  index
+                  element={<AdminDashboard />}
+                />
+
+                <Route
+                  path="customers"
+                  element={<Customers />}
+                />
+
+                <Route
+                  path="drivers"
+                  element={<Drivers />}
+                />
+
+                <Route
+                  path="rides"
+                  element={<RideRequests />}
+                />
+
+                <Route
+                  path="deliveries"
+                  element={<DeliveryRequests />}
+                />
+
+                <Route
+                  path="complaints"
+                  element={<Complaints />}
+                />
+
+                <Route
+                  path="ratings"
+                  element={<AdminRatings />}
+                />
+
+                <Route
+                  path="reports"
+                  element={<Reports />}
+                />
+
+                <Route
+                  path="settings"
+                  element={<Settings />}
+                />
+
+                <Route
+                  path="verification"
+                  element={<AdminVerification />}
+                />
+
+                <Route
+                  path="audit-log"
+                  element={<AuditLog />}
+                />
+
+                <Route
+                  path="coach-payments"
+                  element={<CoachPayments />}
+                />
+
+                <Route
+                  path="operators"
+                  element={<AdminOperators />}
+                />
+
+                <Route
+                  path="coaches"
+                  element={<AdminCoaches />}
+                />
+
+                <Route
+                  path="coach-routes"
+                  element={<AdminRoutes />}
+                />
+
+                <Route
+                  path="coach-schedules"
+                  element={<AdminSchedules />}
+                />
+
+                <Route
+                  path="coach-bookings"
+                  element={<AdminCoachBookings />}
+                />
               </Route>
 
               {/* ===================== FALLBACK ===================== */}
-              <Route path="*" element={<Navigate to="/" replace />} />
+
+              <Route
+                path="*"
+                element={<Navigate to="/" replace />}
+              />
 
             </Routes>
 
