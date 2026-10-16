@@ -86,3 +86,24 @@ export function disconnectSocket() {
     socket = null;
   }
 }
+
+
+socket.on('connect', () => {
+  console.log('🔥 SOCKET CONNECTED:', socket.id);
+});
+
+socket.on('connect_error', (err) => {
+  console.error('🔥 SOCKET CONNECT ERROR:', {
+    message: err?.message,
+    description: err?.description,
+    context: err?.context,
+    data: err?.data,
+  });
+});
+
+socket.on('disconnect', (reason, details) => {
+  console.error('🔥 SOCKET DISCONNECTED:', {
+    reason,
+    details,
+  });
+});
