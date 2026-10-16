@@ -117,8 +117,22 @@ export async function googleAuth(req, res) {
       user: userPayload(user)
     });
   } catch (error) {
-    if (error.code === 11000) return fail(res, 409, "GOOGLE_CONFLICT", "An account with this email already exists.");
-    console.error("Google auth error:", error);
-    return fail(res, 500, "SERVER_ERROR", "Something went wrong");
+  if (error?.code === 11000) {
+    console.error("GOOGLE DUPLICATE KEY ERROR:", {
+      keyPattern: error.keyPattern,
+      keyValue: error.keyValue,
+      message: error.message
+    });
+
+    return fail(
+      res,
+      409,
+      "GOOGLE_DUPLICATE_KEY",
+      "Google account could not be linked because a unique account field is already in use."
+    );
   }
+
+  console.error("Google auth error:", error);
+  return fail(res, 500, "SERVER_ERROR", "Something went wrong");
+}
 }
