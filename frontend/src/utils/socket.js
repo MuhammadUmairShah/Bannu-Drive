@@ -10,10 +10,8 @@ export function getSocket() {
     socket = io(import.meta.env.VITE_API_URL, {
       withCredentials: true,
 
-      // IMPORTANT:
-      // Vercel was successfully answering the initial polling request,
-      // but subsequent polling requests were returning 400.
-      // Use WebSocket directly instead of Engine.IO polling.
+      // Use WebSocket directly.
+      // This avoids the polling 400 issue we were seeing on Vercel.
       transports: ['websocket'],
 
       autoConnect: false,
@@ -26,21 +24,27 @@ export function getSocket() {
       timeout: 10000,
     });
 
-    // Connection established
+    // =========================================================
+    // SOCKET CONNECTED
+    // =========================================================
     socket.on('connect', () => {
-      console.log('Socket.IO connected:', socket.id);
+      console.log('🔥 SOCKET CONNECTED:', socket.id);
     });
 
-    // Connection error
+    // =========================================================
+    // SOCKET CONNECTION ERROR
+    // =========================================================
     socket.on('connect_error', async (err) => {
-      console.warn(
-        'Socket.IO connection error:',
-        err?.message,
-        err?.data
-      );
+      console.error('🔥 SOCKET CONNECT ERROR:', {
+        message: err?.message,
+        description: err?.description,
+        context: err?.context,
+        data: err?.data,
+      });
 
       const code = err?.data?.code;
 
+      // Only refresh session for authentication-related errors.
       if (
         !['AUTH_EXPIRED', 'AUTH_REQUIRED'].includes(code) ||
         refreshingForSocket
@@ -58,7 +62,7 @@ export function getSocket() {
         }
       } catch (error) {
         console.warn(
-          'Socket session refresh failed:',
+          '⚠️ Socket session refresh failed:',
           error?.message
         );
       } finally {
@@ -68,42 +72,31 @@ export function getSocket() {
       }
     });
 
-    socket.on('disconnect', (reason) => {
-      console.log(
-        'Socket.IO disconnected:',
-        reason
-      );
+    // =========================================================
+    // SOCKET DISCONNECTED
+    // =========================================================
+    socket.on('disconnect', (reason, details) => {
+      console.warn('🔥 SOCKET DISCONNECTED:', {
+        reason,
+        details,
+      });
     });
   }
 
   return socket;
 }
 
+// =============================================================
+// DISCONNECT SOCKET
+// =============================================================
 export function disconnectSocket() {
   if (socket) {
+    console.log('🔌 Closing Socket.IO connection');
+
     socket.removeAllListeners();
     socket.disconnect();
     socket = null;
   }
+
+  refreshingForSocket = false;
 }
-
-
-socket.on('connect', () => {
-  console.log('🔥 SOCKET CONNECTED:', socket.id);
-});
-
-socket.on('connect_error', (err) => {
-  console.error('🔥 SOCKET CONNECT ERROR:', {
-    message: err?.message,
-    description: err?.description,
-    context: err?.context,
-    data: err?.data,
-  });
-});
-
-socket.on('disconnect', (reason, details) => {
-  console.error('🔥 SOCKET DISCONNECTED:', {
-    reason,
-    details,
-  });
-});
