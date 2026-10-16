@@ -1,5 +1,17 @@
-// Serverless (Vercel) entry: REST API ONLY. Socket.IO cannot run on serverless functions.
-// For realtime seats, notifications and live tracking deploy `server.js` on a persistent host.
-import app from "./app.js";
+// Vercel entry point
+// Express REST API + Socket.IO on the same HTTP server.
 
-export default app;
+import http from "http";
+
+import app from "./app.js";
+import { initSocket } from "./shared/realtime/socket.js";
+
+// Create the HTTP server manually so Socket.IO can attach to it.
+const server = http.createServer(app);
+
+// Attach Socket.IO to the same server.
+initSocket(server);
+
+// Vercel handles the server lifecycle.
+// Do NOT call server.listen() here.
+export default server;
