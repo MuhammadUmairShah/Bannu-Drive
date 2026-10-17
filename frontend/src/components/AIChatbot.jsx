@@ -2,7 +2,6 @@ import {
   Bot,
   MessageCircle,
   Send,
-  Sparkles,
   User,
   X,
 } from "lucide-react";
@@ -151,52 +150,166 @@ export default function AIChatbot() {
           FLOATING AI BUTTON
       ========================================================= */}
       {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Open Bannu Drive AI Assistant"
+        <div
           className="
+            group
             fixed
             bottom-5
             right-5
             z-[100]
-            flex
-            h-12
-            w-12
-            items-center
-            justify-center
-            rounded-full
-            bg-primary
-            text-white
-            shadow-lg
-            shadow-black/20
-            transition-all
-            duration-300
-            hover:scale-105
-            hover:shadow-xl
           "
         >
-          <MessageCircle size={21} />
-
+          {/* Soft outer glow */}
           <span
             className="
+              pointer-events-none
               absolute
-              -right-0.5
-              -top-0.5
+              -inset-2
+              rounded-full
+              bg-primary/20
+              opacity-70
+              blur-xl
+              transition-all
+              duration-500
+              group-hover:bg-primary/30
+              group-hover:opacity-100
+            "
+          />
+
+          {/* Animated outer ring */}
+          <span
+            className="
+              pointer-events-none
+              absolute
+              -inset-1
+              rounded-full
+              border
+              border-primary/25
+              opacity-80
+              transition-all
+              duration-500
+              group-hover:-inset-2
+              group-hover:border-primary/40
+            "
+          />
+
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label="Open Bannu Drive AI Assistant"
+            className="
+              relative
               flex
-              h-4
-              w-4
+              h-[68px]
+              w-[68px]
               items-center
               justify-center
+              overflow-hidden
               rounded-full
-              bg-white
-              text-primary
-              shadow
+              border
+              border-white/20
+              bg-primary
+              text-white
+              shadow-xl
+              shadow-primary/30
+              transition-all
+              duration-300
+              hover:-translate-y-1
+              hover:scale-105
+              hover:shadow-2xl
+              hover:shadow-primary/40
+              active:translate-y-0
+              active:scale-95
             "
           >
-            <Sparkles size={9} />
-          </span>
-        </button>
+            {/* Inner glass circle */}
+            <span
+              className="
+                pointer-events-none
+                absolute
+                inset-[5px]
+                rounded-full
+                border
+                border-white/15
+                bg-white/[0.04]
+              "
+            />
+
+            {/* Subtle top shine */}
+            <span
+              className="
+                pointer-events-none
+                absolute
+                left-2
+                right-2
+                top-1
+                h-1/2
+                rounded-full
+                bg-white/[0.06]
+                blur-sm
+              "
+            />
+
+            {/* AI Bot */}
+            <Bot
+              size={31}
+              strokeWidth={1.9}
+              className="
+                relative
+                z-10
+                transition-all
+                duration-300
+                group-hover:scale-110
+              "
+            />
+
+            {/* Small status dot */}
+            <span
+              className="
+                absolute
+                bottom-[10px]
+                right-[10px]
+                z-20
+                h-3
+                w-3
+                rounded-full
+                border-2
+                border-primary
+                bg-emerald-300
+                shadow-sm
+              "
+            />
+          </button>
+
+          {/* Tooltip */}
+          <div
+            className="
+              pointer-events-none
+              absolute
+              bottom-[78px]
+              right-0
+              translate-y-1
+              whitespace-nowrap
+              rounded-lg
+              border
+              border-line
+              bg-surface
+              px-3
+              py-1.5
+              text-[11px]
+              font-medium
+              text-fg
+              opacity-0
+              shadow-lg
+              transition-all
+              duration-200
+              group-hover:translate-y-0
+              group-hover:opacity-100
+            "
+          >
+            Ask Bannu Drive AI
+          </div>
+        </div>
       )}
 
       {/* =========================================================
