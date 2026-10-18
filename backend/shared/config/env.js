@@ -8,7 +8,7 @@ export const isProd = () =>
 const clean = (v) =>
   String(v || "").trim().replace(/\/+$/, "");
 
-// Browser + Capacitor Android app origins allowed
+// Browser + Capacitor app origins allowed
 // to call the API and open sockets.
 export const allowedOrigins = () => {
   const origins = [];
@@ -16,7 +16,9 @@ export const allowedOrigins = () => {
   // Production frontend
   for (const key of ["CLIENT_URL", "FRONTEND_URL", "Frontend_URL"]) {
     if (process.env[key]) {
-      origins.push(clean(process.env[key]));
+      origins.push(
+        ...String(process.env[key]).split(",").map(clean).filter(Boolean)
+      );
     }
   }
 
@@ -30,8 +32,12 @@ export const allowedOrigins = () => {
     );
   }
 
-  // Capacitor Android WebView
-  origins.push("http://localhost");
+  // Capacitor app WebView origins
+  origins.push(
+    "https://localhost",       // Android (Capacitor default scheme)
+    "http://localhost",        // Android (agar androidScheme "http" ho)
+    "capacitor://localhost"    // iOS
+  );
 
   // Local development
   if (!isProd()) {
