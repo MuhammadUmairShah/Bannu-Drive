@@ -8,7 +8,8 @@ export const isProd = () =>
 const clean = (v) =>
   String(v || "").trim().replace(/\/+$/, "");
 
-// Browser + Capacitor app origins allowed to call the API and open sockets.
+// Browser + Capacitor Android app origins allowed
+// to call the API and open sockets.
 export const allowedOrigins = () => {
   const origins = [];
 
@@ -19,7 +20,7 @@ export const allowedOrigins = () => {
     }
   }
 
-  // Extra allowed origins from environment variables
+  // Additional allowed origins from environment
   if (process.env.ALLOWED_ORIGINS) {
     origins.push(
       ...process.env.ALLOWED_ORIGINS
@@ -32,7 +33,7 @@ export const allowedOrigins = () => {
   // Capacitor Android WebView
   origins.push("http://localhost");
 
-  // Local development origins are never allowed in production
+  // Local development
   if (!isProd()) {
     origins.push(
       "http://localhost:5173",
@@ -54,14 +55,15 @@ export const cloudinaryConfigured = () =>
 export const googleConfigured = () =>
   Boolean(process.env.GOOGLE_CLIENT_ID);
 
-// Authentication tuning (all optional)
+// Authentication configuration
 export const authConfig = () => ({
   accessTtlMin: Number(process.env.ACCESS_TOKEN_MINUTES) || 15,
   refreshDays: Number(process.env.REFRESH_TOKEN_DAYS) || 30,
   sessionOnlyHours: 24
 });
 
-// Documents must be approved before an operator/driver becomes verified.
+// Documents must be approved before
+// an operator/driver becomes verified.
 export const requireDocuments = () => {
   const v = String(
     process.env.REQUIRE_DOCUMENTS_FOR_VERIFICATION || ""
@@ -73,7 +75,7 @@ export const requireDocuments = () => {
   return isProd();
 };
 
-// Throws in production if something dangerous is misconfigured.
+// Validate environment variables
 export const validateEnv = () => {
   const problems = [];
 
@@ -102,8 +104,8 @@ export const validateEnv = () => {
     );
   }
 
-  for (const p of problems) {
-    console.warn(`[env] ${p}`);
+  for (const problem of problems) {
+    console.warn(`[env] ${problem}`);
   }
 
   if (!cloudinaryConfigured()) {
