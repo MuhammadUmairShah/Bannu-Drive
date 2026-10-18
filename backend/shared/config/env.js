@@ -5,10 +5,10 @@ dotenv.config();
 export const isProd = () =>
   process.env.NODE_ENV === "production" || !!process.env.VERCEL;
 
-const clean = (v) => String(v || "").trim().replace(/\/+$/, "");
+const clean = (v) =>
+  String(v || "").trim().replace(/\/+$/, "");
 
-// Browser origins allowed to call the API and open sockets.
-// CLIENT_URL (preferred) or FRONTEND_URL, plus extra comma separated ALLOWED_ORIGINS.
+// Browser + Capacitor app origins allowed to call the API and open sockets.
 export const allowedOrigins = () => {
   const origins = [];
 
@@ -18,7 +18,10 @@ export const allowedOrigins = () => {
 
   if (process.env.ALLOWED_ORIGINS) {
     origins.push(
-      ...process.env.ALLOWED_ORIGINS.split(",").map(clean).filter(Boolean)
+      ...process.env.ALLOWED_ORIGINS
+        .split(",")
+        .map(clean)
+        .filter(Boolean)
     );
   }
 
@@ -51,11 +54,10 @@ export const googleConfigured = () =>
 export const authConfig = () => ({
   accessTtlMin: Number(process.env.ACCESS_TOKEN_MINUTES) || 15,
   refreshDays: Number(process.env.REFRESH_TOKEN_DAYS) || 30,
-  sessionOnlyHours: 24 // used when "keep me signed in" is off
+  sessionOnlyHours: 24
 });
 
 // Documents must be approved before an operator/driver becomes verified.
-// Default: ON in production, OFF in development (so demo accounts stay usable).
 export const requireDocuments = () => {
   const v = String(
     process.env.REQUIRE_DOCUMENTS_FOR_VERIFICATION || ""
@@ -63,16 +65,20 @@ export const requireDocuments = () => {
 
   if (v === "true") return true;
   if (v === "false") return false;
+
   return isProd();
 };
 
-// Throws in production if something dangerous is misconfigured; warns in development.
+// Throws in production if something dangerous is misconfigured.
 export const validateEnv = () => {
   const problems = [];
 
-  if (!process.env.MONGO_URI) problems.push("MONGO_URI is missing");
-  if (!process.env.JWT_SECRET) problems.push("JWT_SECRET is missing");
-  else if (
+  if (!process.env.MONGO_URI)
+    problems.push("MONGO_URI is missing");
+
+  if (!process.env.JWT_SECRET) {
+    problems.push("JWT_SECRET is missing");
+  } else if (
     isProd() &&
     process.env.JWT_SECRET.length < 32
   ) {
@@ -91,7 +97,9 @@ export const validateEnv = () => {
     );
   }
 
-  for (const p of problems) console.warn(`[env] ${p}`);
+  for (const p of problems) {
+    console.warn(`[env] ${p}`);
+  }
 
   if (!cloudinaryConfigured()) {
     console.warn(
