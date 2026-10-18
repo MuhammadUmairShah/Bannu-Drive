@@ -2,7 +2,8 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-export const isProd = () => process.env.NODE_ENV === "production" || !!process.env.VERCEL;
+export const isProd = () =>
+  process.env.NODE_ENV === "production" || !!process.env.VERCEL;
 
 const clean = (v) => String(v || "").trim().replace(/\/+$/, "");
 
@@ -16,21 +17,35 @@ export const allowedOrigins = () => {
   }
 
   if (process.env.ALLOWED_ORIGINS) {
-    origins.push(...process.env.ALLOWED_ORIGINS.split(",").map(clean).filter(Boolean));
+    origins.push(
+      ...process.env.ALLOWED_ORIGINS.split(",").map(clean).filter(Boolean)
+    );
   }
+
+  // Capacitor Android app
+  origins.push("http://localhost");
 
   // Local development origins are never allowed in production
   if (!isProd()) {
-    origins.push("http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173");
+    origins.push(
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "http://127.0.0.1:5173"
+    );
   }
 
   return [...new Set(origins.filter(Boolean))];
 };
 
 export const cloudinaryConfigured = () =>
-  Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+  Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET
+  );
 
-export const googleConfigured = () => Boolean(process.env.GOOGLE_CLIENT_ID);
+export const googleConfigured = () =>
+  Boolean(process.env.GOOGLE_CLIENT_ID);
 
 // Authentication tuning (all optional)
 export const authConfig = () => ({
@@ -42,7 +57,10 @@ export const authConfig = () => ({
 // Documents must be approved before an operator/driver becomes verified.
 // Default: ON in production, OFF in development (so demo accounts stay usable).
 export const requireDocuments = () => {
-  const v = String(process.env.REQUIRE_DOCUMENTS_FOR_VERIFICATION || "").toLowerCase();
+  const v = String(
+    process.env.REQUIRE_DOCUMENTS_FOR_VERIFICATION || ""
+  ).toLowerCase();
+
   if (v === "true") return true;
   if (v === "false") return false;
   return isProd();
@@ -54,15 +72,36 @@ export const validateEnv = () => {
 
   if (!process.env.MONGO_URI) problems.push("MONGO_URI is missing");
   if (!process.env.JWT_SECRET) problems.push("JWT_SECRET is missing");
-  else if (isProd() && process.env.JWT_SECRET.length < 32) problems.push("JWT_SECRET must be at least 32 characters in production");
+  else if (
+    isProd() &&
+    process.env.JWT_SECRET.length < 32
+  ) {
+    problems.push(
+      "JWT_SECRET must be at least 32 characters in production"
+    );
+  }
 
-  if (isProd() && allowedOrigins().length === 0) problems.push("CLIENT_URL must be set in production");
+  if (isProd() && allowedOrigins().length === 0) {
+    problems.push("CLIENT_URL must be set in production");
+  }
 
   if (problems.length && isProd()) {
-    throw new Error(`Invalid environment: ${problems.join("; ")}`);
+    throw new Error(
+      `Invalid environment: ${problems.join("; ")}`
+    );
   }
+
   for (const p of problems) console.warn(`[env] ${p}`);
 
-  if (!cloudinaryConfigured()) console.warn("[env] Cloudinary is not configured: image and document uploads are disabled");
-  if (!googleConfigured()) console.warn("[env] GOOGLE_CLIENT_ID is not set: Google sign-in is disabled");
+  if (!cloudinaryConfigured()) {
+    console.warn(
+      "[env] Cloudinary is not configured: image and document uploads are disabled"
+    );
+  }
+
+  if (!googleConfigured()) {
+    console.warn(
+      "[env] GOOGLE_CLIENT_ID is not set: Google sign-in is disabled"
+    );
+  }
 };
