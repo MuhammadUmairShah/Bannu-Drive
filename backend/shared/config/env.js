@@ -12,10 +12,14 @@ const clean = (v) =>
 export const allowedOrigins = () => {
   const origins = [];
 
+  // Production frontend
   for (const key of ["CLIENT_URL", "FRONTEND_URL", "Frontend_URL"]) {
-    if (process.env[key]) origins.push(clean(process.env[key]));
+    if (process.env[key]) {
+      origins.push(clean(process.env[key]));
+    }
   }
 
+  // Extra allowed origins from environment variables
   if (process.env.ALLOWED_ORIGINS) {
     origins.push(
       ...process.env.ALLOWED_ORIGINS
@@ -25,7 +29,7 @@ export const allowedOrigins = () => {
     );
   }
 
-  // Capacitor Android app
+  // Capacitor Android WebView
   origins.push("http://localhost");
 
   // Local development origins are never allowed in production
@@ -73,8 +77,9 @@ export const requireDocuments = () => {
 export const validateEnv = () => {
   const problems = [];
 
-  if (!process.env.MONGO_URI)
+  if (!process.env.MONGO_URI) {
     problems.push("MONGO_URI is missing");
+  }
 
   if (!process.env.JWT_SECRET) {
     problems.push("JWT_SECRET is missing");
